@@ -23,3 +23,18 @@ This repository contains the following directories:
 For this project, you will need both Python and Matlab environments on your machine. The latest Matlab (R2024a at the time of writing) can be downloaded [here](https://www.mathworks.com/help/install/ug/install-products-with-internet-connection.html). As for Python, consider using [Conda](https://conda.io/projects/conda/en/latest/user-guide/install/index.html).
 
 Specific requirements w.r.t. particular modules of this project can be found in corresponding subdirectories.
+
+## That's all, folks!
+
+Thank you for exploring our project! If you found this useful, please consider citing our paper. This would mean the world to our team.
+
+![](https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExeG1zM3RhM3ozY3J1MDNrM2xwcHRxYm9xZDhzNWU1eGcwdDNoeWphbiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/1rFPUD5ZFpc7bVYWk6/giphy.gif)
+
+```bibtex
+@article{mazokha2024rffi,
+  title={RFFI for Mobility Intelligence and MAC Address Derandomization},
+  author={Mazokha, Stepan and Bao, Fanchen and Sklivanitis, George and Hallstrom, Jason O},
+  journal={TBD},
+  year={2024},
+  publisher={TBD}
+}

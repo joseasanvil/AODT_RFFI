@@ -174,8 +174,8 @@ class FingerprintingAPI(metaclass=Singleton):
 
         return known_device_id
 
-    def new_signal(self, frames, new_device_threshold, apply_noise=False):
-        # 1. Initializ a list of device candidates
+    def new_signal(self, frames_rx_all, new_device_threshold, apply_noise=False, update_if_known=True):
+        # 1. Initialize a list of device candidates
         device_candidates = {}
         rx_rssis = {}
         rx_fps = {}
@@ -184,6 +184,9 @@ class FingerprintingAPI(metaclass=Singleton):
         for rx_id in self.rx_ids:
             feature_extractor = self.models[rx_id]
             rx_db_collection = self.db_client.get_or_create_collection(self.db_collections[rx_id])
+
+            # Retrieve frames from a given receiver
+            frames = frames_rx_all[rx_id]
 
             fps = np.zeros((len(frames), 512))
             rssis = np.zeros((len(frames), 1))
@@ -252,14 +255,22 @@ class FingerprintingAPI(metaclass=Singleton):
             candidate_distances[candidate_id] = sum([rx_distances[rx_id] * self.dataset_api.rssi_to_weight(rx_rssis[rx_id]) for rx_id in self.rx_ids])/len(self.rx_ids)
 
         # 4. Are we dealing with a known device? (one of distances below threshold)
+        response = {}
         if len(candidate_distances) > 0 and min(candidate_distances.values()) < new_device_threshold:
             # Which device is the closest?
             known_device_id = min(candidate_distances, key=candidate_distances.get)
-            self._db_update_device(known_device_id, rx_fps, rx_rssis)
+            if update_if_known:
+                self._db_update_device(known_device_id, rx_fps, rx_rssis)
             print(f"This is a known device. ID: {known_device_id}")
+            response['device_hash'] = known_device_id
+            response['is_new'] = False
         else: # No, this is an unknown device. Add it to all collections
             new_device_id = self._db_insert_device(rx_fps, rx_rssis)
             print(f"This is a new device. New ID: {new_device_id}")
+            response['device_hash'] = new_device_id
+            response['is_new'] = True
+
+        return response
 
 # Example usage
 if __name__ == "__main__":

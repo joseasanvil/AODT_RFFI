@@ -6,10 +6,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dataset_api import DatasetAPI
 from extractor_api import ExtractorAPI
+from fingerprinting_api import FingerprintingAPI
 from singleton import Singleton
 from dataset_preparation import awgn
 from scipy.spatial.distance import cdist
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import roc_curve, auc, confusion_matrix, accuracy_score
+from sklearn.neighbors import KNeighborsClassifier
 
 class EvaluationAPI(metaclass=Singleton):
 
@@ -21,6 +24,15 @@ class EvaluationAPI(metaclass=Singleton):
         self.model_config = model_config
         self.dataset_api = DatasetAPI(root_dir, matlab_src_dir, matlab_session_id, aug_on)
         self.extractor_api = ExtractorAPI()
+        self.fp_api = FingerprintingAPI(
+            rx_ids = rx_ids, 
+            data_config=data_config, 
+            aug_config=aug_config,
+            model_config=model_config, 
+            root_dir=root_dir, 
+            matlab_src_dir=matlab_src_dir, 
+            matlab_session_id=matlab_session_id, 
+            aug_on=aug_on)
 
     def evaluate_preamble_offset(self, rx_id, frame_start_train, offset_range, 
                                  epoch_idx_enroll=0, epoch_idx_identify=1, 
@@ -53,7 +65,7 @@ class EvaluationAPI(metaclass=Singleton):
             data_identify = data_identify[:, offset:self.data_config['samples_count']+offset]
 
             # Evaluate the model using the two epochs
-            accuracy = self.extractor_api.evaluate_closed_set_knn(feature_extractor, data_enroll, labels_enroll, data_identify, labels_identify, self.model_config)
+            accuracy = self.evaluate_closed_set_knn(feature_extractor, data_enroll, labels_enroll, data_identify, labels_identify, self.model_config, render_confusion_matrix=False)
 
             print(f"Accuracy: {round(accuracy*100, 2)}%")
 
@@ -110,10 +122,10 @@ class EvaluationAPI(metaclass=Singleton):
 
             # Evaluate the model using the two epochs (based on the device composition, perform either closed set or open set evaluation)
             if set(enroll_device_idx) == set(identify_device_idx):
-                accuracy = self.extractor_api.evaluate_closed_set_knn(feature_extractor, data_enroll, labels_enroll, data_identify, labels_identify, self.model_config, render_confusion_matrix)
+                accuracy = self.evaluate_closed_set_knn(feature_extractor, data_enroll, labels_enroll, data_identify, labels_identify, self.model_config, render_confusion_matrix)
                 print(f"Accuracy: {round(accuracy*100, 2)}%")
             else: 
-                self.extractor_api.evaluate_open_set_knn(feature_extractor, data_enroll, labels_enroll, data_identify, labels_identify, self.model_config, render_roc_curve)
+                self.evaluate_open_set_knn(feature_extractor, data_enroll, labels_enroll, data_identify, labels_identify, self.model_config, render_roc_curve)
 
     def generate_grid_node_ids(self):
         ids = {}
@@ -219,8 +231,6 @@ class EvaluationAPI(metaclass=Singleton):
         fingerprints = np.zeros(shape=(len(node_ids_epoch), len(dataset_epoch_paths), self.data_config['frame_count_epoch'], self.model_config['fp_len']))
         rssis = np.zeros(shape=(len(node_ids_epoch), len(dataset_epoch_paths), self.data_config['frame_count_epoch']))
 
-        print(len(dataset_epoch_paths))
-
         # Extract fingerprint for every epoch
         for m in np.arange(len(dataset_epoch_paths)):
             label = []
@@ -280,7 +290,7 @@ class EvaluationAPI(metaclass=Singleton):
         # plt.legend()
         plt.yticks(ticks=y_ticks_vals, labels=y_ticks_labels)
 
-    def evaluate_temporal_stability(self, models, rx_nodes, node_ids_epoch, epochs_override, show_fp_heatmaps):
+    def evaluate_temporal_stability(self, models, rx_nodes, node_ids_epoch, epochs_override, render_fp_heatmaps, render_temporal_heatmap):
         # Produce fingerprints for all receivers, using corresponding models
         min_epoch_count = sys.maxsize
         fingerprints_all = []
@@ -298,16 +308,17 @@ class EvaluationAPI(metaclass=Singleton):
         fp_maps = np.zeros((len(node_ids_epoch), len(node_ids_epoch), min_epoch_count))
         fp_distances = np.zeros((len(node_ids_epoch), 2))
         for device_idx in np.arange(len(node_ids_epoch)):
-            fp_dist_map, top1_dist, top2_dist = self._evaluate_fingerprint_similarity(node_ids_epoch, fingerprints_all, rssis_all, device_idx, ref_epoch_idx=0, epoch_count=min_epoch_count, show_heatmap = show_fp_heatmaps)
+            fp_dist_map, top1_dist, top2_dist = self._evaluate_fingerprint_similarity(node_ids_epoch, fingerprints_all, rssis_all, device_idx, ref_epoch_idx=0, epoch_count=min_epoch_count, show_heatmap = render_fp_heatmaps)
             fp_distances[device_idx, 0] = top1_dist
             fp_distances[device_idx, 1] = top2_dist
 
             fp_maps[device_idx, :, :] = fp_dist_map
 
-        self._generate_figure_temporal_stability(fp_maps, node_ids_epoch)
+        if render_temporal_heatmap:
+            self._generate_figure_temporal_stability(fp_maps, node_ids_epoch)
 
         # Prepare title for the plot (all settings are taken from the last device's config for now, since they're all almost the same)
-        plot_title = f"Dataset: {self.data_config['dataset_name']}, RX: ALL, Frames: [{self.data_config['frame_count_train']}/{self.data_config['frame_count_epoch']}], Samples: [{self.data_config['samples_count']} ({int(samp_rate/1e6)} MHz)], Augmentation: {self.aug_on}, Alpha: {self.model_config['alpha']}"
+        plot_title = f"Dataset: {self.data_config['dataset_name']}, RX: {rx_nodes}, Frames: [{self.data_config['frame_count_train']}/{self.data_config['frame_count_epoch']}], Samples: [{self.data_config['samples_count']} ({int(samp_rate/1e6)} MHz)], Augmentation: {self.aug_on}, Alpha: {self.model_config['alpha']}"
 
         lower_line_max = max(fp_distances[:, 0])
         higher_line_min = min(fp_distances[:, 1])
@@ -315,7 +326,7 @@ class EvaluationAPI(metaclass=Singleton):
         fp_threshold = (higher_line_min - lower_line_max) / 2 + lower_line_max
 
         # Create a figure with two subplots side by side
-        plt.figure(figsize=(20, 6), dpi=80)
+        plt.figure(figsize=(10, 6), dpi=80)
         plt.plot(fp_distances[:, 0], color='blue', label="Top 1st Fingerprint Similarity")
         plt.plot(fp_distances[:, 1], color='red', label="Top 2nd Fingerprint Similarity")
         plt.plot([0, len(fp_distances)-1], [fp_threshold, fp_threshold], label="New Device Detection Threshold", color="black", linestyle="--")
@@ -324,6 +335,254 @@ class EvaluationAPI(metaclass=Singleton):
         plt.show()
 
         return fp_distances
+
+    def evaluate_closed_set_knn(self, model, data_epoch_1, labels_epoch_1, data_epoch_2, labels_epoch_2, model_config, render_confusion_matrix=True):
+        epoch_1_device_ids = set(labels_epoch_1.flatten())
+        epoch_2_device_ids = set(labels_epoch_2.flatten())
+
+        if epoch_1_device_ids == epoch_2_device_ids:
+            print("Great! Epoch #1 and epoch #2 contain identical sets of device IDs. We can perform closed-set evaluation.")
+        else:
+            print("The device IDs in Epoch #2 and Epoch #1 must be identical. Cannot proceed.")
+            return -1
+
+        # Produce fingerprints for the epoch #1
+        fps_epoch_1 = self.extractor_api.run(model, data_epoch_1, model_config)
+
+        # Perform the enrollment: fit a KNN classifier based on produced fingerprints
+        classifier = KNeighborsClassifier(n_neighbors=10, metric='euclidean')
+        classifier.fit(fps_epoch_1, np.ravel(labels_epoch_1))
+
+        # Produce fingerprints for the epoch #2
+        fps_epoch_2 = self.extractor_api.run(model, data_epoch_2, model_config)
+        labels_epoch_2_predicted = classifier.predict(fps_epoch_2)
+
+        # Get the accuracy
+        accuracy = accuracy_score(labels_epoch_2, labels_epoch_2_predicted)
+        
+        if render_confusion_matrix:
+            conf_matrix = confusion_matrix(labels_epoch_2, labels_epoch_2_predicted)
+            plt.figure(figsize=(12, 10), dpi=60)
+            # TODO: sns.heatmap(conf_matrix, annot=True, cmap='YlGnBu', xticklabels=device_ids, yticklabels=device_ids)
+            sns.heatmap(conf_matrix, annot=True, cmap='YlGnBu')
+            
+            plt.title(f'Device Confusion Matrix (Euclidean Distance)')
+            plt.xlabel('Device ID')
+            plt.ylabel('Device ID')
+            plt.tight_layout()
+            plt.show()
+
+        return accuracy
+    
+    def evaluate_open_set_knn(self, model, data_epoch_1, labels_epoch_1, data_epoch_2, labels_epoch_2, model_config, render_roc_curve=True):
+        # Here, we also expect two epochs. But we expect that the number set of devices in epoch #1 will be smaller compared to
+        # the set of devices in epoch #2.
+        epoch_1_device_ids = set(labels_epoch_1.flatten())
+        epoch_2_device_ids = set(labels_epoch_2.flatten())
+
+        if epoch_1_device_ids <= epoch_2_device_ids:
+            print("Great! Epoch #2 contains more devices than #1, and #1 is a subset of #2. We can start open-set evaluation.")
+        else:
+            print("Device IDs in epoch #1 must be a subset of device IDs in epoch #2. Cannot proceed.")
+            return -1
+
+        # Produce fingerprints for the epoch #1
+        fps_epoch_1 = self.extractor_api.run(model, data_epoch_1, model_config)
+
+        # Perform the enrollment: fit a KNN classifier based on produced fingerprints
+        classifier = KNeighborsClassifier(n_neighbors=10, metric='euclidean')
+        classifier.fit(fps_epoch_1, np.ravel(labels_epoch_1))
+
+        # Produce fingerprints for the epoch #2
+        fps_epoch_2 = self.extractor_api.run(model, data_epoch_2, model_config)
+
+        # Find the nearest 15 neighbors in the RFF database and calculate the distances to them.
+        distances, _ = classifier.kneighbors(fps_epoch_2)
+        
+        # Calculate the average distance to the nearest 15 neighbors.
+        detection_score = distances.mean(axis=1)
+  
+        # Create a mask array which will contain 1 if device is from enrolled list, and 0 if it's new
+        true_labels = [1 if item in epoch_1_device_ids else 0 for item in labels_epoch_2.flatten()]
+
+        # Compute receiver operating characteristic (ROC).
+        fpr, tpr, _ = roc_curve(true_labels, detection_score, pos_label = 1)
+
+        # Invert false positive and true positive ratios to convert from distances to probabilities
+        fpr = 1 - fpr  
+        tpr = 1 - tpr
+
+        # Compute EER
+        fnr = 1-tpr
+        abs_diffs = np.abs(fpr - fnr)
+        min_index = np.argmin(abs_diffs)
+        eer = np.mean((fpr[min_index], fnr[min_index]))
+        
+        # Compute AUC
+        roc_auc = auc(fpr, tpr)
+
+        if render_roc_curve:
+            plt.figure(figsize=(10, 8))
+            plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+            plt.plot([0, 1], [0, 1], color='red', lw=2, linestyle='--', label='Random Guess')
+            
+            eer_point = min(zip(fpr, tpr), key=lambda x: abs(x[0] - (1-x[1])))
+            plt.plot(eer_point[0], eer_point[1], 'ro', markersize=10, label=f'EER = {eer:.2f}')
+            plt.xlim([0.0, 1.0])
+            plt.ylim([0.0, 1.05])
+            plt.xlabel('False Positive Rate')
+            plt.ylabel('True Positive Rate')
+            plt.title('Receiver Operating Characteristic (ROC) Curve')
+            plt.legend(loc="lower right")
+            plt.grid(True)
+            plt.show()
+
+    def evaluate_open_set_knn_multirx(self, models, rx_ids, data_epochs_1, labels_epochs_1, data_epochs_2, labels_epochs_2, rssis_epoch_2, model_config, render_roc_curve=True):
+        ref_rx = rx_ids[0]
+
+        print(rx_ids)
+
+        epoch_1_device_ids = set(labels_epochs_1[ref_rx].flatten())
+        epoch_2_device_ids = set(labels_epochs_2[ref_rx].flatten())
+
+        if epoch_1_device_ids <= epoch_2_device_ids:
+            print(f"Great! Epoch #2 contains more devices than #1, and #1 is a subset of #2. Running open-set for RX: {rx_ids}")
+        else:
+            print("Device IDs in epoch #1 must be a subset of device IDs in epoch #2. Cannot proceed.")
+            return -1
+
+        # Produce detection scores (aka distances) for each receiver
+        detection_scores = {}
+        for rx_id in rx_ids:
+            # Produce fingerprints for the epoch #1
+            fps_epoch_1 = self.extractor_api.run(models[rx_id], data_epochs_1[rx_id], model_config)
+
+            # Perform the enrollment: fit a KNN classifier based on produced fingerprints
+            classifier = KNeighborsClassifier(n_neighbors=10, metric='euclidean')
+            classifier.fit(fps_epoch_1, np.ravel(labels_epochs_1[rx_id]))
+
+            # Produce fingerprints for the epoch #2
+            fps_epoch_2 = self.extractor_api.run(models[rx_id], data_epochs_2[rx_id], model_config)
+
+            # Find the nearest 15 neighbors in the RFF database and calculate the distances to them.
+            distances, _ = classifier.kneighbors(fps_epoch_2)
+            
+            # Calculate the average distance to the nearest 15 neighbors.
+            detection_scores[rx_id] = distances.mean(axis=1)
+
+        # Combine the scores using RSSI-based weights
+        weighted_scores = np.zeros(detection_scores[ref_rx].shape)
+
+        for i in np.arange(weighted_scores.shape[0]):
+            weighted_scores[i] = sum(detection_scores[rx_id][i] * self.dataset_api.rssi_to_weight(rssis_epoch_2[rx_id][i]) for rx_id in rx_ids)
+
+        # Create a mask array which will contain 1 if device is from enrolled list, and 0 if it's new
+        true_labels = [1 if item in epoch_1_device_ids else 0 for item in labels_epochs_2[ref_rx].flatten()]
+
+        # Compute receiver operating characteristic (ROC).
+        fpr, tpr, _ = roc_curve(true_labels, weighted_scores, pos_label = 1)
+
+        # Invert false positive and true positive ratios to convert from distances to probabilities
+        fpr = 1 - fpr  
+        tpr = 1 - tpr
+
+        # Compute EER
+        fnr = 1-tpr
+        abs_diffs = np.abs(fpr - fnr)
+        min_index = np.argmin(abs_diffs)
+        eer = np.mean((fpr[min_index], fnr[min_index]))
+        
+        # Compute AUC
+        roc_auc = auc(fpr, tpr)
+
+        if render_roc_curve:
+            plt.figure(figsize=(10, 8))
+            plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+            plt.plot([0, 1], [0, 1], color='red', lw=2, linestyle='--', label='Random Guess')
+            
+            eer_point = min(zip(fpr, tpr), key=lambda x: abs(x[0] - (1-x[1])))
+            plt.plot(eer_point[0], eer_point[1], 'ro', markersize=10, label=f'EER = {eer:.2f}')
+            plt.xlim([0.0, 1.0])
+            plt.ylim([0.0, 1.05])
+            plt.xlabel('False Positive Rate')
+            plt.ylabel('True Positive Rate')
+            plt.title('Receiver Operating Characteristic (ROC) Curve for Weighted KNN')
+            plt.legend(loc="lower right")
+            plt.grid(True)
+            plt.show()
+
+    def evaluate_closed_set_multirx(self, rx_ids, epoch_idx_enroll = 0, epoch_idx_identify = 1,
+                                    enroll_device_idx = [39, 239, 269, 280, 300, 315, 330, 394, 398],
+                                    identify_device_idx = [39, 239, 269, 280, 300, 315, 330, 394, 398],
+                                    frame_count_enroll = 10, frame_count_identify = 10,
+                                    enroll_threshold = 0, identify_threshold = 0.55):
+        self.fp_api.purge_database()
+        self.fp_api.load_models()
+
+        _, grid_node_coordinates = self.generate_grid_node_ids()
+
+        # Enroll all the devices from epoch #1
+        enrolled_device_map = {}
+        for device_id in enroll_device_idx:
+            print(f"Enrolling device: {grid_node_coordinates[device_id]}")
+
+            # Retrieve frames (across all receivers) for a given device
+            frames_rx_all = {}
+            for rx_id in rx_ids:
+                _, dataset_epoch_paths, _, _, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
+                frames_rx_all[rx_id] = self.dataset_api.load_testing_input(dataset_epoch_paths, epoch_idx=epoch_idx_enroll, device_idx=device_id, frame_count=frame_count_enroll)
+
+            # Enroll the device
+            enrolled_device_hash = self.fp_api.new_signal(frames_rx_all, new_device_threshold=enroll_threshold)
+            print(enrolled_device_hash)
+
+            enrolled_device_map[device_id] = enrolled_device_hash
+
+        # Attempt to identify devices from epoch #2
+        identified_device_map = {}
+        for device_id in identify_device_idx:
+            enrolled_device_hash = enrolled_device_map[device_id]['device_hash']
+            print(f"Identifying device: {grid_node_coordinates[device_id]}. Expected hash: {enrolled_device_hash}")
+
+            # Retrieve frames (across all receivers) for a given device
+            frames_rx_all = {}
+            for rx_id in rx_ids:
+                _, dataset_epoch_paths, _, _, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
+                frames_rx_all[rx_id] =self.dataset_api.load_testing_input(dataset_epoch_paths, epoch_idx=epoch_idx_identify, device_idx=device_id, frame_count=frame_count_identify)
+
+            # Process new signal
+            identification_device_hash = self.fp_api.new_signal(frames_rx_all, new_device_threshold=identify_threshold)
+            print(identification_device_hash)
+
+            identified_device_map[device_id] = identification_device_hash
+
+        # Create a mapping from hash to ID
+        hash_to_id = {v['device_hash']: k for k, v in enrolled_device_map.items()}
+
+        # Create arrays of true labels and predicted labels using device IDs
+        true_labels = np.array(list(enrolled_device_map.keys()))
+        predicted_labels = np.array([hash_to_id[v['device_hash']] for v in identified_device_map.values()])
+
+        # Create the confusion matrix
+        cm = confusion_matrix(true_labels, predicted_labels)
+
+        # Get the unique device IDs (labels)
+        labels = sorted(list(enrolled_device_map.keys()))
+
+        # Plot the confusion matrix
+        plt.figure(figsize=(12, 10))  # Increased figure size
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                    xticklabels=labels, yticklabels=labels, 
+                    square=True)  # square=True ensures square cells
+        plt.xlabel('Predicted')
+        plt.ylabel('True')
+        plt.title('Confusion Matrix with Device IDs')
+
+        # Rotate the tick labels and set their alignment
+        plt.setp(plt.gca().get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+
+        plt.tight_layout()  # Adjust the layout to prevent clipping of tick-labels
+        plt.show()
 
 if __name__ == "__main__":
     print("Please refer to the primary workbook or the README for tutorial on how to use this class.")
