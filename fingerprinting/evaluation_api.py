@@ -70,9 +70,9 @@ class EvaluationAPI(metaclass=Singleton):
     def evaluate_loss_function(self, rx_id, loss_functions = ['triplet_loss', 'quadruplet_loss'],
                                  epoch_idx_enroll=0, epoch_idx_identify=1, 
                                  frame_count_enroll=100, frame_count_identify=100, 
-                                 enroll_device_idx = [39, 239, 269, 280, 300, 315, 330, 394, 398],
+                                 enroll_device_idx = [39, 239, 269, 280, 300],
                                  identify_device_idx = [39, 239, 269, 280, 300, 315, 330, 394, 398],
-                                 aug_on = False, apply_noise=False, render_confusion_matrix = False):
+                                 aug_on = False, apply_noise=False, render_confusion_matrix = False, render_roc_curve = False):
 
         print("Load the training dataset")
         dataset_train_path, dataset_epoch_paths, _, node_ids_train, _, samp_rate = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
@@ -82,7 +82,6 @@ class EvaluationAPI(metaclass=Singleton):
         if apply_noise: data = awgn(data, np.arange(self.aug_config['awgn'][0][0], self.aug_config['awgn'][0][1]))
         data_train = data[:, 0:0+self.data_config['samples_count']]
     
-        accuracies = {}
         for loss_function in loss_functions:
             print(f"Evaluating for {loss_function}")
 
@@ -109,14 +108,12 @@ class EvaluationAPI(metaclass=Singleton):
             data_enroll = data_enroll[:, 0:self.data_config['samples_count']]
             data_identify = data_identify[:, 0:self.data_config['samples_count']]
 
-            # Evaluate the model using the two epochs
-            accuracy = self.extractor_api.evaluate_closed_set_knn(feature_extractor, data_enroll, labels_enroll, data_identify, labels_identify, self.model_config, render_confusion_matrix)
-
-            print(f"Accuracy: {round(accuracy*100, 2)}%")
-
-            accuracies[loss_function] = accuracy
-
-        return accuracies
+            # Evaluate the model using the two epochs (based on the device composition, perform either closed set or open set evaluation)
+            if set(enroll_device_idx) == set(identify_device_idx):
+                accuracy = self.extractor_api.evaluate_closed_set_knn(feature_extractor, data_enroll, labels_enroll, data_identify, labels_identify, self.model_config, render_confusion_matrix)
+                print(f"Accuracy: {round(accuracy*100, 2)}%")
+            else: 
+                self.extractor_api.evaluate_open_set_knn(feature_extractor, data_enroll, labels_enroll, data_identify, labels_identify, self.model_config, render_roc_curve)
 
     def generate_grid_node_ids(self):
         ids = {}
