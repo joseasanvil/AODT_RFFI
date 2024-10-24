@@ -4,12 +4,15 @@ import h5py
 import matlab.engine
 from singleton import Singleton
 
+np.random.seed(42)
+
 class DatasetAPI(metaclass=Singleton):
 
     DATASET_V1 = 'v1_jul_13' # 25 Msps, 2-hour period, manual capture, only one RX node (node1-1)
     DATASET_V2 = 'v2_jul_19' # 25 Msps, 24-hour period, automated capture, 4 RX nodes
     DATASET_V3 = 'v2_jul_21' # 20 Msps, 4-hour period, automated capture, 4 RX nodes
     DATASET_V4 = 'v3_aug_8'  # 25 Msps, 24-hour period, automated capture, 3 RX nodes (1-1, 1-20, 19-19)
+    DATASET_WISIG = 'wisig'
 
     RX_1 = 'node1-1'
     RX_2 = 'node1-20'
@@ -19,6 +22,7 @@ class DatasetAPI(metaclass=Singleton):
     DATASET_V2_TX_MAX_EPOCHS = [39, 239, 269, 280, 300, 315, 330, 394, 398]
     DATASET_V4_TX_MAX_EPOCHS = [1, 259, 10, 269, 398, 247, 280, 186, 315, 189]
     DATASET_V4_TX_MAX_DEVICES = [1, 259, 10, 394, 269, 270, 398, 273, 280, 300, 186, 315, 189, 330, 209, 219, 247, 379, 252]
+    DATASET_WISIG_TX = [239, 242, 266, 269, 280, 300, 315, 329, 330, 360, 378, 380, 391, 394, 398]
 
     DATASET_V2_EPOCHS_MAX_DEVICES = None
     # DATASET_V4_EPOCHS_MAX_DEVICES = None
@@ -56,17 +60,30 @@ class DatasetAPI(metaclass=Singleton):
         ]
 
 
-    def __init__(self, root_dir, matlab_src_dir, matlab_session_id, aug_on=False):
+    def __init__(self, root_dir, matlab_src_dir, matlab_session_id, aug_on=False, seed=42):
+        self.rng = np.random.RandomState(seed)
         self.root_dir = root_dir
         self.dataset_v1_path = os.path.join(self.root_dir, 'orbit_dataset_v1')
         self.dataset_v2_path = os.path.join(self.root_dir, 'orbit_dataset_v2_jul19')
         self.dataset_v3_path = os.path.join(self.root_dir, 'orbit_dataset_v2_jul21')
         self.dataset_v4_path = os.path.join(self.root_dir, 'orbit_dataset_v3_aug8')
+        self.dataset_wisig_path = os.path.join(self.root_dir, 'wisig_dataset_1rx')
 
         if aug_on:
-            mateng = matlab.engine.connect_matlab(matlab_session_id)
-            mateng.cd(matlab_src_dir, nargout=0)
+            self.mateng = matlab.engine.connect_matlab(matlab_session_id)
+            self.mateng.cd(matlab_src_dir, nargout=0)
         else: self.mateng = None
+
+    def _load_dataset_wisig(self):
+        dataset_train_path = os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Train', 'node1-1_non_eq_train.h5')
+        # dataset_train_path = os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Train', 'node1-1_eq_train.h5')
+        model_path = os.path.join(self.dataset_wisig_path, 'my_models')
+        dataset_epoch_paths = [
+            os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Test', 'noneq_epoch_2021-03-01_00-00-00.h5'),
+            os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_08', 'Test', 'noneq_epoch_2021-03-08_00-00-00.h5')
+        ]
+        samp_rate = 25e6
+        return dataset_train_path, dataset_epoch_paths, model_path, samp_rate
 
     def _load_dataset_v1(self, rx_name, allowed_epochs):
         dataset_train_path = os.path.join(self.dataset_v1_path, 'training_2024-07-13_06-53-20', rx_name + '_non_eq_train.h5')
@@ -146,28 +163,33 @@ class DatasetAPI(metaclass=Singleton):
             dataset_train_path, dataset_epoch_paths, model_path, samp_rate = self._load_dataset_v3(rx_name, allowed_epochs)
         elif dataset_name == self.DATASET_V4:
             dataset_train_path, dataset_epoch_paths, model_path, samp_rate = self._load_dataset_v4(rx_name, allowed_epochs)    
+        elif dataset_name == self.DATASET_WISIG:
+            dataset_train_path, dataset_epoch_paths, model_path, samp_rate = self._load_dataset_wisig()
         else: print('Invalid dataset name.')
 
         node_ids_train = self._get_dataset_devices(self.load_raw_dataset(dataset_train_path)[1], show=False)
         node_ids_epoch = self._get_dataset_devices(self.load_raw_dataset(dataset_epoch_paths[0])[1], show=False)
+
+        print(len(node_ids_train))
+        print(len(node_ids_epoch))
 
         return dataset_train_path, dataset_epoch_paths, model_path, node_ids_train, node_ids_epoch, samp_rate
 
     def _shuffle_dataset(self, data, labels, rssi):
         # Produce a new order for elements
         new_order = np.arange(labels.shape[0])
-        np.random.shuffle(new_order)
+        self.rng.shuffle(new_order)
 
         data = data[new_order, :]
         labels = labels[new_order]
-        rssi = rssi[new_order]
+        rssi = rssi[new_order] if rssi else None
 
         return data, labels, rssi
 
     def load_raw_dataset(self, path, shuffle=False):
         with h5py.File(path,'r') as f:
             data = f['data'][:]
-            rssi = f['rssi'][:]
+            rssi = f['rssi'][:] if 'rssi' in f else None
             labels = f['label'][:].astype(int)
 
             iq = data[:, 0::2] + 1j * data[:, 1::2] # Convert from interleaved doubles to complex values
@@ -188,9 +210,9 @@ class DatasetAPI(metaclass=Singleton):
         
         data = np.array(result['data_aug']).swapaxes(0, 1)
         labels = np.array(result['label_aug']).swapaxes(0, 1)
-        rssi = np.array(result['rssi_aug']).swapaxes(0, 1)
+        # rssi = np.array(result['rssi_aug']).swapaxes(0, 1)
 
-        return data, labels, rssi
+        return data, labels, None
 
     def filter_dataset(self, data, labels, rssi, dev_range, pkt_range):
         # If the list of devices isn't specified - loop through all of the available ones
@@ -206,7 +228,7 @@ class DatasetAPI(metaclass=Singleton):
         
         # Filter the dataset based on dev_range and pkt_range
         labels = labels[frame_idx_filtered]
-        rssi = rssi[frame_idx_filtered]
+        rssi = rssi[frame_idx_filtered] if rssi else None
         data = data[frame_idx_filtered, :]
 
         return data, labels, rssi
@@ -238,7 +260,10 @@ class DatasetAPI(metaclass=Singleton):
         data, labels, rssi = self.filter_dataset(data, labels, rssi, dev_range=[device_idx], pkt_range=np.arange(frame_count))
 
         # 3. Reformat the dataset to a frame-based format
-        return [{'iq': iq, 'rssi': rssi_value} for iq, rssi_value in zip(data, rssi)]
+        if rssi:
+            return [{'iq': iq, 'rssi': rssi_value} for iq, rssi_value in zip(data, rssi)]
+        else:
+            return [{'iq': iq} for iq in data]
 
 if __name__ == "__main__":
     print("Please refer to the primary workbook or the README for tutorial on how to use this class.")

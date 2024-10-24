@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import ipywidgets as widgets
+import pickle
+import hashlib
 from IPython.display import display
 
 def read_dat_iq_file(file_path):
@@ -45,18 +47,13 @@ def apply_ieee_style():
     plt.rcParams.update({
         "font.family": "serif",
         "font.serif": ["Times New Roman"],
-        "font.size": 8,
-        "axes.labelsize": 8,
-        "axes.titlesize": 9,
-        "xtick.labelsize": 8,
-        "ytick.labelsize": 8,
-        "legend.fontsize": 8,
-        "figure.dpi": 80,
+        "font.size": 12,
+        "figure.dpi": 300,
         "savefig.dpi": 300,
         "text.usetex": False,
-        "axes.linewidth": 0.5,
+        "axes.linewidth": 1,
         "grid.linewidth": 0.5,
-        "lines.linewidth": 0.5,
+        "lines.linewidth": 1,
 
         # Grayscale settings
         "image.cmap": "gray",
@@ -72,3 +69,39 @@ def apply_ieee_style():
         "xtick.color": 'black',
         "ytick.color": 'black'
     })
+
+def extract_unix_timestamp_ms(file_path):
+    from datetime import datetime
+    
+    # Extract the timestamp part from the file path
+    timestamp_str = file_path.split('_epoch_')[1].replace('.h5', '')
+    
+    # Convert the timestamp string to a datetime object
+    timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d_%H-%M-%S')
+    
+    # Convert the datetime object to unix time in milliseconds
+    unix_timestamp_ms = int(timestamp.timestamp() * 1000)
+    
+    return unix_timestamp_ms
+
+def convert_ms_to_time_label(unix_timestamp_ms):
+    # Convert milliseconds to seconds, minutes, and hours
+    total_seconds = unix_timestamp_ms // 1000
+    minutes = (total_seconds // 60) % 60
+    hours = total_seconds // 3600
+    seconds = total_seconds % 60
+    
+    # Create a time label based on the length of time
+    if hours > 0:
+        return f'{hours}h'
+    elif minutes > 0:
+        return f'{minutes}m'
+    else:
+        return f'{seconds}s'
+
+def hash_object(obj):
+    # Serialize the object with pickle
+    obj_bytes = pickle.dumps(obj)
+    # Hash the serialized data
+    hash_object = hashlib.sha256(obj_bytes)
+    return hash_object.hexdigest()

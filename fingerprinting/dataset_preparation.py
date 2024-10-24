@@ -4,6 +4,8 @@ from numpy import sum,sqrt
 from numpy.random import standard_normal, uniform
 from scipy import signal
 
+np.random.seed(42)
+
 def awgn(data, snr_range):
     
     pkt_num = data.shape[0]
@@ -109,7 +111,7 @@ class ChannelIndSpectrogram():
         return x_cropped
 
 
-    def _gen_single_channel_ind_spectrogram(self, sig, win_len=256, overlap=128):
+    def _gen_single_channel_ind_spectrogram(self, sig, win_len=256, overlap=128, enable_ind=True):
         '''
         _gen_single_channel_ind_spectrogram converts the IQ samples to a channel
         independent spectrogram according to set window and overlap length.
@@ -138,15 +140,20 @@ class ChannelIndSpectrogram():
         # FFT shift to adjust the central frequency.
         spec = np.fft.fftshift(spec, axes=0)
 
-        # Generate channel independent spectrogram.
-        chan_ind_spec = spec[:,1:]/spec[:,:-1]    
-        
-        # Take the logarithm of the magnitude.      
-        chan_ind_spec_amp = np.log10(np.abs(chan_ind_spec)**2)
-                  
-        return chan_ind_spec_amp
+        # Leave only magnitudes
+        spec = np.abs(spec)
+
+        if enable_ind:
+            # Generate channel independent spectrogram.
+            chan_ind_spec = spec[:,1:]/spec[:,:-1]    
+        else:
+            chan_ind_spec = spec[:,1:]
+
+        chan_ind_spec = np.log10(np.abs(chan_ind_spec)**2)
+
+        return chan_ind_spec
     
-    def channel_ind_spectrogram(self, data, row):
+    def channel_ind_spectrogram(self, data, row, enable_ind):
         '''
         channel_ind_spectrogram converts IQ samples to channel independent 
         spectrograms.
@@ -165,6 +172,6 @@ class ChannelIndSpectrogram():
         # Convert each packet (IQ samples) to a channel independent spectrogram.
         data_channel_ind_spec = np.zeros([data.shape[0], row, col, 1])
         for i in np.arange(data.shape[0]):
-            data_channel_ind_spec[i,:,:,0] = self._gen_single_channel_ind_spectrogram(data[i], win_len=50, overlap=25)
+            data_channel_ind_spec[i,:,:,0] = self._gen_single_channel_ind_spectrogram(data[i], win_len=row, overlap=25, enable_ind=enable_ind)
         return data_channel_ind_spec
 

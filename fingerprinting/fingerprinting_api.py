@@ -12,6 +12,8 @@ from singleton import Singleton
 from dataset_api import DatasetAPI
 from extractor_api import ExtractorAPI
 
+np.random.seed(42)
+
 class FingerprintingAPI(metaclass=Singleton):
 
     VECTOR_SEARCH_MAX_RESULTS = 3
@@ -111,7 +113,7 @@ class FingerprintingAPI(metaclass=Singleton):
 
             # Retrieve (and optionally augment) the data to produce data, label variables
             if self.aug_on:
-                data, label, rssi = self.dataset_api.load_augmented_dataset(dataset_train_path, samp_rate, self.aug_config, shuffle=True)
+                data, label, rssi = self.dataset_api.load_augmented_dataset(dataset_train_path, samp_rate, self.aug_config, shuffle=False)
             else:
                 data, label, rssi = self.dataset_api.load_raw_dataset(dataset_train_path, shuffle=True)
 
@@ -152,7 +154,7 @@ class FingerprintingAPI(metaclass=Singleton):
                 embeddings=[rx_fps[rx_id].tolist()],
                 ids=[new_device_id],
                 metadatas=[{
-                    "rssi": rx_rssis[rx_id],
+                    "rssi": rx_rssis[rx_id] if rx_rssis else "N/A",
                     "date_added": insert_date,
                     "date_updated": ""
                 }])
@@ -169,7 +171,7 @@ class FingerprintingAPI(metaclass=Singleton):
                 embeddings=[rx_fps[rx_id].tolist()],
                 ids=[known_device_id],
                 metadatas=[{
-                    "rssi": rx_rssis[rx_id],
+                    "rssi": rx_rssis[rx_id] if rx_rssis else "N/A",
                     "date_updated": update_date
                 }])
 
@@ -202,17 +204,22 @@ class FingerprintingAPI(metaclass=Singleton):
                     iq = awgn(np.array([iq]), np.arange(self.aug_config['awgn'][0][0], self.aug_config['awgn'][0][1]))
 
                 # 3. Save frame RSSI value (without transforming for now, to keep its absolute value)
-                rssis[i] = frame['rssi']
+                if 'rssi' in frame:
+                    rssis[i] = frame['rssi']
+                else: rssis = None
 
                 # 4. Extract a fingerprint
                 fps[i, :] = self.extractor_api.run(feature_extractor, np.array([iq]), self.model_config)
 
             # 2. Aggregate all frame RPs and RSSIs (either by picking one of them, or getting a mean value)
             fp = np.mean(fps, 0)
-            rssi = np.mean(rssis)
+            rssi = np.mean(rssis) if rssis else None
 
             # 2.1. Add the RSSI to the dictionary to weigh impact of this receiver
-            rx_rssis[rx_id] = rssi
+            if rssi: 
+                rx_rssis[rx_id] = rssi
+            else: rx_rssis = None
+
             rx_fps[rx_id] = fp
 
             # 3. Use this fingerprint to look up candidates in the database
@@ -253,10 +260,10 @@ class FingerprintingAPI(metaclass=Singleton):
                 rx_distances[rx_id] = candidate_rx_distance
 
             # 2. Calculate device candidate weighted distance to our frame
-            candidate_distances[candidate_id] = sum([rx_distances[rx_id] * self.dataset_api.rssi_to_weight(rx_rssis[rx_id]) for rx_id in self.rx_ids])/len(self.rx_ids)
-
-        if len(candidate_distances) > 0:
-            print(min(candidate_distances.values()))
+            if rx_rssis:
+                candidate_distances[candidate_id] = sum([rx_distances[rx_id] * self.dataset_api.rssi_to_weight(rx_rssis[rx_id]) for rx_id in self.rx_ids])/len(self.rx_ids)
+            else: 
+                candidate_distances[candidate_id] = np.mean([rx_distances[rx_id] for rx_id in self.rx_ids])
 
         # 4. Are we dealing with a known device? (one of distances below threshold)
         response = {}
@@ -268,11 +275,15 @@ class FingerprintingAPI(metaclass=Singleton):
             print(f"This is a known device. ID: {known_device_id}")
             response['device_hash'] = known_device_id
             response['is_new'] = False
+            response['closest_dist'] = min(candidate_distances.values())
         else: # No, this is an unknown device. Add it to all collections
             new_device_id = self._db_insert_device(rx_fps, rx_rssis)
             print(f"This is a new device. New ID: {new_device_id}")
             response['device_hash'] = new_device_id
             response['is_new'] = True
+            if len(candidate_distances.values()) > 0:
+                response['closest_dist'] = min(candidate_distances.values())
+            else: response['closest_dist'] = 1
 
         return response
 

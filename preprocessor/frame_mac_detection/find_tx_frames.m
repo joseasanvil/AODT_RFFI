@@ -4,7 +4,9 @@
 
 function T = find_tx_frames(filepath, bw, samp_rate, search_mac_tx, preamble_len)
     X = read_iq(filepath);
-    X = X(1:floor(length(X) / 10)); % TODO: only for larger files
+    figure;
+    plot(1:length(X), real(X));
+    X = X(1:floor(length(X))); % TODO: only for larger files
 
     % 1. Analyze the waveform
     analyzer = WaveformAnalyzer();
@@ -14,20 +16,40 @@ function T = find_tx_frames(filepath, bw, samp_rate, search_mac_tx, preamble_len
     preamble_bounds = {};
     preamble_iq = {};
     rssi = {};
+    macs = {};
     
     fprintf('Searching for %s\n', search_mac_tx);
     printout_counter = 0;
     for mac_i = 1:size(analyzer.Results, 2)
-        mac_summary = macSummary(analyzer, mac_i, false);
+        item = analyzer.Results{mac_i};
+        if item.MAC.Processed == 0
+            continue;
+        end
+
+        fprintf('------------')
+        fprintf(item.MAC.MPDU.Config.FrameType);
+        fprintf('\n');
+        fprintf(item.MAC.MPDU.Config.Address1);
+        fprintf('\n');
+        fprintf(item.MAC.MPDU.Config.Address2);
+        fprintf('\n');
+        fprintf(item.MAC.MPDU.Config.Address3)
+        fprintf('\n')
+
+
+        mac_summary = macSummary(analyzer, mac_i, true);
         if isempty(mac_summary)
             continue;
         end
     
         % frame_rx_mac = parse_mac_address(mac_summary{1, 1}); % MAC address of the AP
         frame_tx_mac = parse_mac_address(mac_summary{1, 2}); % MAC address of the emitter
+
+        fprintf(frame_tx_mac);
     
         % Filter frames based on the TX MAC address
-        if strcmp(frame_tx_mac, search_mac_tx)
+        % if strcmp(frame_tx_mac, search_mac_tx)
+        if true
             fprintf('.');
             printout_counter = printout_counter + 1;
             if printout_counter == 40
@@ -50,6 +72,7 @@ function T = find_tx_frames(filepath, bw, samp_rate, search_mac_tx, preamble_len
             preamble_bounds{end+1} = [samples_start, samples_end];
             preamble_iq{end+1} = X(samples_start:samples_end);
             rssi{end+1} = round(10*log10(x.PacketPower),2);
+            macs(end+1) = {frame_tx_mac};
         end
     end
     fprintf('\n');
@@ -60,6 +83,7 @@ function T = find_tx_frames(filepath, bw, samp_rate, search_mac_tx, preamble_len
     T.('preamble_bounds') = preamble_bounds;
     T.('preamble_iq') = preamble_iq;
     T.('rssi') = rssi;
+    T.('macs') = macs;
 end
 
 function [formattedMac] = parse_mac_address(mac)

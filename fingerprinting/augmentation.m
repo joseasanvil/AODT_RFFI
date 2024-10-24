@@ -3,11 +3,11 @@ function [T] = augmentation(file_path, Fs, t_rms_bounds, f_d_bounds, k_factor_bo
 
     label = h5read(file_path, '/label');
     data = h5read(file_path, '/data');
-    rssi = h5read(file_path, '/rssi');
+    % rssi = h5read(file_path, '/rssi');
 
     data = repmat(data, 1, N);
     label = repmat(label, 1, N);
-    rssi = repmat(rssi, 1, N);
+    % rssi = repmat(rssi, 1, N);
 
     data_aug = zeros(size(data, 1)/2, length(label));
 
@@ -30,7 +30,8 @@ function [T] = augmentation(file_path, Fs, t_rms_bounds, f_d_bounds, k_factor_bo
     T = struct();
     T.('data_aug') = data_aug;
     T.('label_aug') = label;
-    T.('rssi_aug') = rssi;
+    % T.('rssi_aug') = rssi;
+    T.('rssi_aug') = zeros();
 end
 
 function [sig_out, myPathGain] = augmentation_run(sig_in, Fs, t_rms_bounds, f_d_bounds, k_factor_bounds)

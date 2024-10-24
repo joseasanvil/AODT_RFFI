@@ -1,12 +1,20 @@
+import numpy as np
 import visualkeras
+import utils
 from sklearn.model_selection import train_test_split
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from keras.optimizers import RMSprop
+from keras.optimizers import RMSprop, Adam
 from dataset_preparation import ChannelIndSpectrogram
-from deep_learning_models import NPairNet, identity_loss
+from deep_learning_models import identity_loss, QuadrupletNet, TripletNet
 from singleton import Singleton
 from keras.models import load_model
 from sklearn.model_selection import train_test_split
+import tensorflow as tf
+import seaborn as sea
+import matplotlib.pyplot as plt
+
+tf.random.set_seed(42)
+np.random.seed(42)
 
 class ExtractorAPI(metaclass=Singleton):
 
@@ -16,48 +24,59 @@ class ExtractorAPI(metaclass=Singleton):
         row = model_config['row']
         loss_type = model_config['loss_type']
         alpha = model_config['alpha']
-        num_neg = model_config['loss_num_neg']
-        npair_type = model_config['npair_type']
         
         ChannelIndSpectrogramObj = ChannelIndSpectrogram()
         
         # Convert time-domain IQ samples to channel-independent spectrograms.
-        data = ChannelIndSpectrogramObj.channel_ind_spectrogram(data, row)
-        
-        NPairNetObj = NPairNet()
-        
-        # Create an RFF extractor.
-        feature_extractor = NPairNetObj.feature_extractor(data.shape)
-        
-        # Create the Triplet net using the RFF extractor.
-        npair_net = NPairNetObj.create_npair_net(feature_extractor, alpha, num_neg, loss_type)
+        data = ChannelIndSpectrogramObj.channel_ind_spectrogram(data, row, enable_ind=model_config['enable_ind'])
 
+        print(model_config['enable_ind'])
+        sea.heatmap(data[0, :, :, 0].squeeze())
+        plt.plot()
+        
+        if loss_type == 'triplet_loss': 
+            netObj = TripletNet()
+            feature_extractor = netObj.feature_extractor(data.shape)
+            net = netObj.create_net(feature_extractor, alpha=alpha)
+        elif loss_type == 'quadruplet_loss': 
+            netObj = QuadrupletNet()
+            feature_extractor = netObj.feature_extractor(data.shape)
+            net = netObj.create_net(feature_extractor, alpha1=alpha, alpha2=alpha/3)
+        else: 
+            print('Invalid loss type.')
+            return None
+        
         # Create callbacks during training
         callbacks = [
             EarlyStopping(monitor='val_loss', min_delta = 0, patience = patience, restore_best_weights=True), 
             ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience = patience, min_lr=1e-6, verbose=1)]
         
         # Split the dasetset into validation and training sets.
-        data_train, data_valid, label_train, label_valid = train_test_split(data, label, test_size=0.1, shuffle= True)
+        data_train, data_valid, label_train, label_valid = train_test_split(data, label, test_size=0.1, shuffle=True, random_state=42)
+
         del data, label
         
         # Create the trainining generator.
-        train_generator = NPairNetObj.create_generator(batch_size, dev_range,  data_train, label_train, npair_type)
+        train_generator = netObj.create_generator(batch_size, dev_range,  data_train, label_train)
         # Create the validation generator.
-        valid_generator = NPairNetObj.create_generator(batch_size, dev_range, data_valid, label_valid, npair_type)
+        valid_generator = netObj.create_generator(batch_size, dev_range, data_valid, label_valid)
         
         # Use the RMSprop optimizer for training.
-        opt = RMSprop(learning_rate=1e-3)
-        npair_net.compile(loss = identity_loss, optimizer = opt)
+        # opt = RMSprop(learning_rate=1e-3)
+        opt = Adam(learning_rate=1e-3)
+        net.compile(loss = identity_loss, optimizer = opt)
 
         # Start training.
-        history = npair_net.fit(train_generator,
+        history = net.fit(train_generator,
                                 steps_per_epoch = data_train.shape[0]//batch_size,
                                 epochs = 1000,
                                 validation_data = valid_generator,
                                 validation_steps = data_valid.shape[0]//batch_size,
                                 verbose=1, 
-                                callbacks = callbacks)
+                                callbacks = callbacks,
+                                workers=1,
+                                use_multiprocessing=False,
+                                shuffle=False)
 
         if save_path:
             feature_extractor.save(save_path, overwrite=True)
@@ -69,10 +88,10 @@ class ExtractorAPI(metaclass=Singleton):
 
     def run(self, model, data, model_config):
         # Prepare input data for the model (convert to spectrogram images)
-        data_freq = ChannelIndSpectrogram().channel_ind_spectrogram(data, model_config['row'])
+        data_freq = ChannelIndSpectrogram().channel_ind_spectrogram(data, model_config['row'], enable_ind=model_config['enable_ind'])
 
         # Extract fingerprints from the trained model
-        return model.predict(data_freq)
+        return model.predict(data_freq, verbose=0)
 
 # Example usage
 if __name__ == "__main__":

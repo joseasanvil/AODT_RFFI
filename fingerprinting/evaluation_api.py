@@ -143,7 +143,6 @@ class EvaluationAPI(metaclass=Singleton):
         tx_node_coordinates_2 = [node_coordinates[item] for item in tx_node_ids_2]
         rx_node_coordinates = [node_coordinates[item] for item in rx_node_ids]
         
-
         plt.figure(figsize=(8, 8), dpi=80)
         for i in np.arange(1, 21):
             for j in np.arange(1, 21):
@@ -190,16 +189,21 @@ class EvaluationAPI(metaclass=Singleton):
 
                     # Compute the Euclidean distances between reference fingerprints and current fingerprints
                     distances = cdist(ref_fps[rx_i], data, 'euclidean')
+                    rx_distances.append(np.mean(distances))
 
                     # Extract the K RSSI values for device i at epoch j and compute an average value
-                    rssis = rssis_all[rx_i][i, j, :]
-
-                    rx_distances.append(np.mean(distances))
-                    rx_weights.append(self.dataset_api.rssi_to_weight(np.mean(rssis)))
+                    if rssis_all:
+                        rssis = rssis_all[rx_i][i, j, :]
+                        rx_weights.append(self.dataset_api.rssi_to_weight(np.mean(rssis)))
+                    else: 
+                        rx_weights = None
 
                 # rx_weights = [0.5, 0.5, 0.5, 0.5]
                 
-                avg_distances[i, j] = sum(d * w for d, w in zip(rx_distances, rx_weights))/len(rx_weights)
+                if rx_weights:
+                    avg_distances[i, j] = sum(d * w for d, w in zip(rx_distances, rx_weights))/len(rx_weights)
+                else:
+                    avg_distances[i, j] = np.mean(rx_distances)
 
         device_distances = np.mean(avg_distances, axis=1)
 
@@ -239,15 +243,28 @@ class EvaluationAPI(metaclass=Singleton):
         fingerprints = np.zeros(shape=(len(node_ids_epoch), len(dataset_epoch_paths), self.data_config['frame_count_epoch'], self.model_config['fp_len']))
         rssis = np.zeros(shape=(len(node_ids_epoch), len(dataset_epoch_paths), self.data_config['frame_count_epoch']))
 
+        # Extract epoch timestamps and sort the epoch paths in ascending order
+        epoch_timestamps = []
+        epoch_paths_dict = {}
+        for epoch_path in dataset_epoch_paths:
+            timestamp = utils.extract_unix_timestamp_ms(epoch_path)
+            epoch_timestamps.append(timestamp)
+            epoch_paths_dict[timestamp] = epoch_path
+
+        epoch_timestamps = np.sort(epoch_timestamps)
+
         # Extract fingerprint for every epoch
         epoch_idx = 0
-        for m in np.arange(len(dataset_epoch_paths)):
+
+        for m in np.arange(len(epoch_timestamps)):
+            timestamp = epoch_timestamps[m]
+            epoch_path = epoch_paths_dict[timestamp]
             label = []
             try:
                 print('.', end='')
 
                 # Load all frames/samples for a given epoch
-                data, label, rssi = self.dataset_api.load_raw_dataset(dataset_epoch_paths[m], shuffle=False)
+                data, label, rssi = self.dataset_api.load_raw_dataset(epoch_path, shuffle=False)
 
                 # Filter the dataset (pick specified nodes & frames)
                 data, label, rssi = self.dataset_api.filter_dataset(data, label, rssi, dev_range=node_ids_epoch, pkt_range=np.arange(0, self.data_config['frame_count_epoch']))
@@ -263,23 +280,29 @@ class EvaluationAPI(metaclass=Singleton):
 
                 # Reshape the fingerprints for easier retrieval
                 data_fps_reshaped = data_fps.reshape(len(node_ids_epoch), int(data.shape[0]/len(node_ids_epoch)), data_fps.shape[1])
-                rssi_reshaped = rssi.reshape(len(node_ids_epoch), int(data.shape[0]/len(node_ids_epoch)))
+                if rssi:
+                    rssi_reshaped = rssi.reshape(len(node_ids_epoch), int(data.shape[0]/len(node_ids_epoch)))
+                else: 
+                    rssi_reshaped = None
 
                 # Save fingerprints for further analysis
                 for n in np.arange(data_fps_reshaped.shape[0]):
                     for k in np.arange(data_fps_reshaped.shape[1]):
                         fingerprints[n, epoch_idx, k, :] = data_fps_reshaped[n, k, :]
-                        rssis[n, epoch_idx, k] = rssi_reshaped[n, k]
+                        if rssi_reshaped:
+                            rssis[n, epoch_idx, k] = rssi_reshaped[n, k]
+                        else: 
+                            rssis = None
 
                 epoch_idx = epoch_idx + 1
             except Exception as e:
-                print(dataset_epoch_paths[m])
+                print(epoch_paths_dict[epoch_timestamps[m]])
                 print(e)
                 traceback.print_exc()
 
-        return samp_rate, fingerprints, rssis
+        return samp_rate, fingerprints, rssis, epoch_timestamps
 
-    def _generate_figure_temporal_stability(self, fp_maps, tx_node_names, fig_full_path):
+    def _generate_figure_temporal_stability(self, fp_maps, tx_node_names, epoch_timestamps, fig_full_path):
         utils.apply_ieee_style()
 
         fp_maps_normalized = MinMaxScaler(feature_range=(0, 1)).fit_transform(fp_maps.reshape(-1, 1))
@@ -287,8 +310,13 @@ class EvaluationAPI(metaclass=Singleton):
 
         y_ticks_vals = []
         y_ticks_labels = []
+
+        # x_ticks_vals = np.append(np.arange(0, len(epoch_timestamps), 25), len(epoch_timestamps) - 1)
+        x_ticks_vals = np.arange(0, len(epoch_timestamps), 20)
+        x_ticks_labels = [utils.convert_ms_to_time_label(timestamp) for timestamp in np.array(epoch_timestamps)[x_ticks_vals] - epoch_timestamps[0]]
+
         for node_i, fp_map in enumerate(fp_maps):
-            tx_node_name = f"Node ID: {tx_node_names[node_i]}"
+            tx_node_name = f"#{tx_node_names[node_i]}"
             tx_node_fp_distances = fp_map[node_i, :]
 
             y_ticks_vals.append(node_i)
@@ -296,8 +324,8 @@ class EvaluationAPI(metaclass=Singleton):
 
             plt.plot(tx_node_fp_distances + node_i, label=tx_node_name, color='black')
 
-        # plt.legend()
         plt.yticks(ticks=y_ticks_vals, labels=y_ticks_labels)
+        plt.xticks(ticks=x_ticks_vals, labels=x_ticks_labels)
         if fig_full_path: plt.savefig(fig_full_path, format='eps', bbox_inches='tight', pad_inches=0.1)
         plt.show()
 
@@ -306,12 +334,16 @@ class EvaluationAPI(metaclass=Singleton):
         min_epoch_count = sys.maxsize
         fingerprints_all = []
         rssis_all = []
+        epoch_timestamps = []
         for i, rx_node in enumerate(rx_nodes):
             print(f"Generating eval finerprints for {rx_node}...")
             # Samp rate is always the same, so we'll just use the last one
-            _, fingerprints, rssis = self._produce_fingerprints(models, rx_node, node_ids_epoch, epochs_override)
+            _, fingerprints, rssis, epoch_timestamps = self._produce_fingerprints(models, rx_node, node_ids_epoch, epochs_override)
             fingerprints_all.append(fingerprints)
-            rssis_all.append(rssis)
+            if rssis: 
+                rssis_all.append(rssis)
+            else: 
+                rssis_all = None
 
             min_epoch_count = min(min_epoch_count, fingerprints.shape[1])
             
@@ -329,34 +361,28 @@ class EvaluationAPI(metaclass=Singleton):
             fp_maps[device_idx, :, :] = fp_dist_map
 
         if render_temp_stability:
-            self._generate_figure_temporal_stability(fp_maps, node_ids_epoch, os.path.join(fig_path, 'temporal_stability.eps'))
+            self._generate_figure_temporal_stability(fp_maps, node_ids_epoch, epoch_timestamps, os.path.join(fig_path, 'temporal_stability.eps'))
 
         # Prepare title for the plot (all settings are taken from the last device's config for now, since they're all almost the same)
         lower_line_max = max(fp_distances[:, 0])
         higher_line_min = min(fp_distances[:, 1])
 
         fp_threshold = (higher_line_min - lower_line_max) / 2 + lower_line_max
+        print(f"Re-identification threshold: {fp_threshold}")
 
         threshold_gap = higher_line_min - lower_line_max
 
         # Create a figure with two subplots side by side
         utils.apply_ieee_style()
-        plt.figure(figsize=(10, 4))
-        plt.plot(fp_distances[:, 0], color='blue', label="Device with Similarity Rank 1")
-        plt.plot(fp_distances[:, 1], color='red', label="Device with Similarity Rank 2")
-        plt.plot([0, len(fp_distances)-1], [fp_threshold, fp_threshold], label="Binary Classification Threshold", color="black", linestyle="--")
+        plt.figure(figsize=(10, 3))
+        plt.plot(fp_distances[:, 0], color='blue')#, label="Device with Similarity Rank 1")
+        plt.plot(fp_distances[:, 1], color='red')#, label="Device with Similarity Rank 2")
+        plt.plot([0, len(fp_distances)-1], [fp_threshold, fp_threshold], color="black", linestyle="--")#, label="Binary Classification Threshold")
         plt.plot([], [], ' ', label=f"Threshold Gap: {round(threshold_gap, 2)}")
-        plt.ylim(0, 0.8)
+        # plt.ylim(0, 0.8)
         plt.legend(loc='lower left', bbox_to_anchor=(0, 0))
-        plt.xticks(ticks=range(len(node_ids_epoch)), labels=node_ids_epoch)
+        plt.xticks(ticks=range(len(node_ids_epoch)), labels=[f"#{item}" for item in node_ids_epoch])
         plt.grid()
-        # plt.title(f"""
-        #           Dataset: {self.data_config['dataset_name']}, 
-        #           RX: {rx_nodes}, 
-        #           Frames: [{self.data_config['frame_count_train']}/{self.data_config['frame_count_epoch']}], 
-        #           Samples: [{self.data_config['samples_count']} ({int(samp_rate/1e6)} MHz)], 
-        #           Augmentation: {self.aug_on}, 
-        #           Alpha: {self.model_config['alpha']}""")
         if rank_dist_fig_file: 
             plt.savefig(os.path.join(fig_path, rank_dist_fig_file), format='eps', bbox_inches='tight', pad_inches=0.1)
         plt.show()
@@ -377,7 +403,7 @@ class EvaluationAPI(metaclass=Singleton):
         fps_epoch_1 = self.extractor_api.run(model, data_epoch_1, model_config)
 
         # Perform the enrollment: fit a KNN classifier based on produced fingerprints
-        classifier = KNeighborsClassifier(n_neighbors=10, metric='euclidean')
+        classifier = KNeighborsClassifier(n_neighbors=15, metric='euclidean')
         classifier.fit(fps_epoch_1, np.ravel(labels_epoch_1))
 
         # Produce fingerprints for the epoch #2
@@ -468,7 +494,7 @@ class EvaluationAPI(metaclass=Singleton):
             if fig_path: plt.savefig(fig_path, format='eps', bbox_inches='tight', pad_inches=0.1)
             plt.show()
 
-    def evaluate_open_set_knn_multirx(self, models, rx_ids, data_epochs_1, labels_epochs_1, data_epochs_2, labels_epochs_2, rssis_epoch_2, model_config, fig_path=None):
+    def evaluate_open_set_knn_multirx(self, models, rx_ids, data_epochs_1, labels_epochs_1, data_epochs_2, labels_epochs_2, rssis_epoch_2, model_config, fig_path=None, fig_title=None):
         ref_rx = rx_ids[0]
 
         epoch_1_device_ids = set(labels_epochs_1[ref_rx].flatten())
@@ -487,7 +513,7 @@ class EvaluationAPI(metaclass=Singleton):
             fps_epoch_1 = self.extractor_api.run(models[rx_id], data_epochs_1[rx_id], model_config)
 
             # Perform the enrollment: fit a KNN classifier based on produced fingerprints
-            classifier = KNeighborsClassifier(n_neighbors=10, metric='euclidean')
+            classifier = KNeighborsClassifier(n_neighbors=15, metric='euclidean')
             classifier.fit(fps_epoch_1, np.ravel(labels_epochs_1[rx_id]))
 
             # Produce fingerprints for the epoch #2
@@ -503,7 +529,10 @@ class EvaluationAPI(metaclass=Singleton):
         weighted_scores = np.zeros(detection_scores[ref_rx].shape)
 
         for i in np.arange(weighted_scores.shape[0]):
-            weighted_scores[i] = sum(detection_scores[rx_id][i] * self.dataset_api.rssi_to_weight(rssis_epoch_2[rx_id][i]) for rx_id in rx_ids)
+            if rssis_epoch_2:
+                weighted_scores[i] = sum(detection_scores[rx_id][i] * self.dataset_api.rssi_to_weight(rssis_epoch_2[rx_id][i]) for rx_id in rx_ids)
+            else:
+                weighted_scores[i] = sum(detection_scores[rx_id][i] for rx_id in rx_ids)
 
         # Create a mask array which will contain 1 if device is from enrolled list, and 0 if it's new
         true_labels = [1 if item in epoch_1_device_ids else 0 for item in labels_epochs_2[ref_rx].flatten()]
@@ -535,12 +564,13 @@ class EvaluationAPI(metaclass=Singleton):
             plt.xlabel('False Positive Rate')
             plt.ylabel('True Positive Rate')
             # plt.title('Receiver Operating Characteristic (ROC) Curve for Weighted KNN')
+            if fig_title: plt.title(fig_title)
             plt.legend(loc="lower right")
             plt.grid(True)
             if fig_path: plt.savefig(fig_path, format='eps', bbox_inches='tight', pad_inches=0.1)
             plt.show()
 
-    def evaluate_closed_set_multirx(self, rx_ids, epoch_idx_enroll = 0, epoch_idx_identify = 1,
+    def evaluate_closed_set_multirx(self, rx_ids, epoch_idx_enroll = 0, epochs_idx_identify = [1],
                                     enroll_device_idx = DatasetAPI.DATASET_V2_TX_MAX_EPOCHS,
                                     identify_device_idx = DatasetAPI.DATASET_V2_TX_MAX_EPOCHS,
                                     frame_count_enroll = 10, frame_count_identify = 10,
@@ -560,6 +590,7 @@ class EvaluationAPI(metaclass=Singleton):
                 frames_rx_all = {}
                 for rx_id in rx_ids:
                     _, dataset_epoch_paths, _, _, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
+
                     frames_rx_all[rx_id] = self.dataset_api.load_testing_input(dataset_epoch_paths, epoch_idx=epoch_idx_enroll, device_idx=device_id, frame_count=frame_count_enroll)
 
                 # Enroll the device
@@ -569,44 +600,47 @@ class EvaluationAPI(metaclass=Singleton):
                 enrolled_device_map[device_id] = enrolled_device_hash
             except Exception as e:
                 print(f"Failed to enroll device {device_id}: {e}")
+                print(traceback.format_exc())
 
-        # Attempt to identify devices from epoch #2
-        identified_device_map = {}
-        for device_id in identify_device_idx:
-            try:
-                enrolled_device_hash = enrolled_device_map[device_id]['device_hash']
-                print(f"Identifying device: {grid_node_coordinates[device_id]}. Expected hash: {enrolled_device_hash}")
-
-                # Retrieve frames (across all receivers) for a given device
-                frames_rx_all = {}
-                for rx_id in rx_ids:
-                    _, dataset_epoch_paths, _, _, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
-                    frames_rx_all[rx_id] =self.dataset_api.load_testing_input(dataset_epoch_paths, epoch_idx=epoch_idx_identify, device_idx=device_id, frame_count=frame_count_identify)
-
-                # Process new signal
-                identification_device_hash = self.fp_api.new_signal(frames_rx_all, new_device_threshold=identify_threshold)
-                print(identification_device_hash)
-
-                identified_device_map[device_id] = identification_device_hash
-            except Exception as e:
-                print(f"Failed to identify device {device_id}: {e}")
-
-        # Create a mapping from hash to ID
+        # Create a mapping from device hash to ID
         hash_to_id = {v['device_hash']: k for k, v in enrolled_device_map.items()}
 
-        # Create arrays of true labels and predicted labels using device IDs
-        true_labels = np.array(list(enrolled_device_map.keys()))
-        predicted_labels = np.array([hash_to_id[v['device_hash']] for v in identified_device_map.values()])
+        # Attempt to identify devices from multiple epochs
+        true_labels = []
+        pred_labels = []
+
+        for epoch_idx in epochs_idx_identify:
+            print(f"Epoch {epoch_idx}")
+            for device_id in identify_device_idx:
+                try:
+                    enrolled_device_hash = enrolled_device_map[device_id]['device_hash']
+                    print(f"E{epoch_idx}. Identifying device: {grid_node_coordinates[device_id]}. Expected hash: {enrolled_device_hash}")
+
+                    # Retrieve frames (across all receivers) for a given device
+                    frames_rx_all = {}
+                    for rx_id in rx_ids:
+                        _, dataset_epoch_paths, _, _, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
+                        frames_rx_all[rx_id] =self.dataset_api.load_testing_input(dataset_epoch_paths, epoch_idx=epoch_idx, device_idx=device_id, frame_count=frame_count_identify)
+
+                    # Process new signal
+                    reidentification_response = self.fp_api.new_signal(frames_rx_all, new_device_threshold=identify_threshold)
+                    print(reidentification_response)
+
+                    true_labels.append(device_id)
+                    pred_labels.append(hash_to_id[reidentification_response['device_hash']])
+                except Exception as e:
+                    print(f"Failed to identify device {device_id}: {e}")
+                    print(traceback.format_exc())
 
         # Create the confusion matrix
-        cm = confusion_matrix(true_labels, predicted_labels)
+        cm = confusion_matrix(np.array(true_labels), np.array(pred_labels))
 
         # Get the unique device IDs (labels)
-        labels = sorted(list(enrolled_device_map.keys()))
+        labels = sorted(list(set(true_labels)))
 
         # Plot the confusion matrix
         utils.apply_ieee_style()
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabels=labels, square=True)
+        sns.heatmap(cm, annot=True, cbar=False, fmt='d', cmap='Blues', xticklabels=labels, yticklabels=labels, square=True)
         plt.xlabel('Predicted')
         plt.ylabel('True')
         plt.title('Confusion Matrix with Device IDs')
@@ -615,20 +649,24 @@ class EvaluationAPI(metaclass=Singleton):
         if fig_path: plt.savefig(fig_path, format='eps', bbox_inches='tight', pad_inches=0.1)
         plt.show()
 
-    def evaluate_open_set_multirx(self, rx_ids, epoch_idx_enroll = 0, epoch_idx_identify = 1,
+    def evaluate_open_set_multirx(self, rx_ids, epoch_idx_enroll = 0, epochs_idx_identify = 1,
                                     enroll_device_idx = DatasetAPI.DATASET_V2_TX_MAX_EPOCHS[0:5],
                                     identify_device_idx = DatasetAPI.DATASET_V2_TX_MAX_EPOCHS,
                                     frame_count_enroll = 10, frame_count_identify = 10,
                                     enroll_threshold = 0, identify_threshold = 0.55, fig_path = None):
-        self.fp_api.purge_database()
         self.fp_api.load_models()
 
         _, grid_node_coordinates = utils.generate_grid_node_ids()
 
-        # Enroll all the devices from epoch #1
-        enrolled_device_map = {}
-        for device_id in enroll_device_idx:
-            try:
+        pred_labels = []
+        true_labels = []
+
+        for epoch_idx in epochs_idx_identify:
+            print(f"============= EPOCH {epoch_idx} ============================")
+            self.fp_api.purge_database()
+
+            # Enroll all the devices from epoch #1
+            for device_id in enroll_device_idx:
                 print(f"Enrolling device: {grid_node_coordinates[device_id]}")
 
                 # Retrieve frames (across all receivers) for a given device
@@ -638,45 +676,32 @@ class EvaluationAPI(metaclass=Singleton):
                     frames_rx_all[rx_id] = self.dataset_api.load_testing_input(dataset_epoch_paths, epoch_idx=epoch_idx_enroll, device_idx=device_id, frame_count=frame_count_enroll)
 
                 # Enroll the device
-                enrolled_device_hash = self.fp_api.new_signal(frames_rx_all, new_device_threshold=enroll_threshold)
-                print(enrolled_device_hash)
+                self.fp_api.new_signal(frames_rx_all, new_device_threshold=enroll_threshold)
+            
+            for device_id in identify_device_idx:
+                try:
+                    print(f"E{epoch_idx}. Identifying a device: {grid_node_coordinates[device_id]}")
 
-                enrolled_device_map[device_id] = enrolled_device_hash
-            except Exception as e:
-                print(f"Failed to enroll device {device_id}: {e}")
+                    # Retrieve frames (across all receivers) for a given device
+                    frames_rx_all = {}
+                    for rx_id in rx_ids:
+                        _, dataset_epoch_paths, _, _, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
+                        frames_rx_all[rx_id] = self.dataset_api.load_testing_input(dataset_epoch_paths, epoch_idx=epoch_idx, device_idx=device_id, frame_count=frame_count_identify)
 
-        pred_labels = []
-        true_labels = [1 if item in enroll_device_idx else 0 for item in identify_device_idx]
+                    # Process new signal
+                    identification_device_hash = self.fp_api.new_signal(frames_rx_all, new_device_threshold=identify_threshold)
 
-        # Attempt to identify devices from epoch #2
-        identified_device_map = {}
-        for device_id in identify_device_idx:
-            try:
-                print(f"Trying to identify a device: {grid_node_coordinates[device_id]}")
-
-                # Retrieve frames (across all receivers) for a given device
-                frames_rx_all = {}
-                for rx_id in rx_ids:
-                    _, dataset_epoch_paths, _, _, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
-                    frames_rx_all[rx_id] = self.dataset_api.load_testing_input(dataset_epoch_paths, epoch_idx=epoch_idx_identify, device_idx=device_id, frame_count=frame_count_identify)
-
-                # Process new signal
-                identification_device_hash = self.fp_api.new_signal(frames_rx_all, new_device_threshold=identify_threshold)
-                print(identification_device_hash)
-
-                identified_device_map[device_id] = identification_device_hash
-
-                pred_labels.append(0 if identification_device_hash['is_new'] else 1)
-            except Exception as e:
-                print(f"Failed to identify device {device_id}: {e}")
+                    pred_labels.append(identification_device_hash['closest_dist'])
+                    true_labels.append(0 if device_id in enroll_device_idx else 1)
+                except Exception as e:
+                    print(f"Failed to identify device {device_id}: {e}")
+                    print(traceback.format_exc())
 
         print(true_labels)
         print(pred_labels)
 
         # Compute receiver operating characteristic (ROC).
-        fpr, tpr, _ = roc_curve(true_labels, pred_labels, pos_label = 1)
-
-        print()
+        fpr, tpr, _ = roc_curve(true_labels, pred_labels)
 
         # Invert false positive and true positive ratios to convert from distances to probabilities
         fpr = 1 - fpr  
@@ -692,7 +717,8 @@ class EvaluationAPI(metaclass=Singleton):
         roc_auc = auc(fpr, tpr)
 
         if fig_path:
-            utils.apply_ieee_style()
+            plt.figure(figsize=(10, 10), dpi=80)
+            # utils.apply_ieee_style()
             eer_point = min(zip(fpr, tpr), key=lambda x: abs(x[0] - (1-x[1])))
             plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
             plt.plot([0, 1], [0, 1], color='red', lw=2, linestyle='--', label='Random Guess')
@@ -706,6 +732,8 @@ class EvaluationAPI(metaclass=Singleton):
             plt.grid(True)
             if fig_path: plt.savefig(fig_path, format='eps', bbox_inches='tight', pad_inches=0.1)
             plt.show()
+
+        return {'true_labels': true_labels, 'pred_labels': pred_labels}
 
 if __name__ == "__main__":
     print("Please refer to the primary workbook or the README for tutorial on how to use this class.")
