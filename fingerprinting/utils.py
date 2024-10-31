@@ -129,8 +129,8 @@ def calculate_preamble_rssi(iq_samples):
     return rssi_db
 
 def filter_abnormal_cfo(cfo_values, plot=False):
-    q1 = np.percentile(cfo_values, 20)
-    q3 = np.percentile(cfo_values, 80)
+    q1 = np.percentile(cfo_values, 10)
+    q3 = np.percentile(cfo_values, 90)
 
     iqr = abs(q3 - q1)
 
@@ -175,7 +175,7 @@ def filter_abnormal_rssi(rssi_values, plot=False):
     iqr = abs(q3 - q1)
 
     # Sensitivity
-    sensitivity = 0.5
+    sensitivity = 0
     
     # Define lower and upper bounds
     lower_bound = q1 - sensitivity * iqr

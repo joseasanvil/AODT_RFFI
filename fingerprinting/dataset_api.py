@@ -199,10 +199,8 @@ class DatasetAPI(metaclass=Singleton):
 
         if dataset_name == self.DATASET_WISIG:
             node_ids_train = [9, 11, 15, 17, 25, 38, 52, 57, 60, 69, 80, 84, 129, 130, 133, 142, 147, 157, 190, 196, 203, 206, 239, 242, 280, 300, 315, 329, 330, 360, 378, 380, 391]
-            node_ids_epoch = [114, 159, 269, 266, 394, 398] # disjointed set of emitters
-            # node_ids_epoch = [9, 11, 15, 17, 25, 38] # joint set of emitters (training subset)
-            # node_ids_epoch = [9, 25, 84, 133, 142]
-            # node_ids_epoch = [9, 11, 15, 17, 25, 38, 52, 57, 60, 69, 80, 84, 129]
+            node_ids_epoch = [159, 269, 266, 394, 398] # disjoint set of emitters
+            # node_ids_epoch = [9, 11, 17, 25, 38] # joint set of emitters (training subset)
         elif dataset_name == self.DATASET_V2V4:
             node_ids_train = self._get_dataset_devices(self.load_raw_dataset(dataset_train_path)[1], show=False)
             node_ids_epoch = [269, 398, 280, 315, 394, 300, 330]
@@ -254,11 +252,12 @@ class DatasetAPI(metaclass=Singleton):
                 cfo = cfo_utils.extract_data_cfo(iq_raw)
                 iq = cfo_utils.compensate_cfo(iq, cfo)
                 # TODO: here we plot CFO before and after compensation across retrieved samples
-                # cfo_new = cfo_utils.extract_data_cfo(iq_eq)
+                # cfo_new = cfo_utils.extract_data_cfo(iq)
                 # plt.figure(figsize=(10, 8), dpi=80)
-                # plt.plot(cfo[:, 0], 'red', label='coarse')
-                # plt.plot(cfo_new[:, 0], 'blue', label='coarse new')
+                # plt.plot(cfo[:, 0] + cfo[:, 1], 'red', label='Original CFO values')
+                # plt.plot(cfo_new[:, 0] + cfo_new[:, 1], 'blue', label='Corrected CFO values (equalized!)')
                 # plt.ylim(-50e3, 50e3)
+                # plt.title('Day 2: CFO removal')
                 # plt.show()
         else: print('Not removing CFO.')
 
