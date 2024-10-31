@@ -1,3 +1,4 @@
+from torch import normal
 import numpy as np
 import matplotlib.pyplot as plt
 import ipywidgets as widgets
@@ -105,3 +106,94 @@ def hash_object(obj):
     # Hash the serialized data
     hash_object = hashlib.sha256(obj_bytes)
     return hash_object.hexdigest()
+
+def calculate_preamble_rssi(iq_samples):
+    """
+    Calculate RSSI from a vector of complex IQ samples.
+    
+    Parameters:
+    iq_samples (np.ndarray): Array of complex IQ samples.
+    
+    Returns:
+    float: Estimated RSSI in dB.
+    """
+    # Step 1: Calculate power for each IQ sample
+    power_samples = np.abs(iq_samples) ** 2
+    
+    # Step 2: Average the power
+    avg_power = np.mean(power_samples)
+    
+    # Step 3: Convert to dB
+    rssi_db = 10 * np.log10(avg_power)
+    
+    return rssi_db
+
+def filter_abnormal_cfo(cfo_values, plot=False):
+    q1 = np.percentile(cfo_values, 20)
+    q3 = np.percentile(cfo_values, 80)
+
+    iqr = abs(q3 - q1)
+
+    sensitivity = 0
+
+    lower_bound = q1 - sensitivity * iqr
+    upper_bound = q3 + sensitivity * iqr
+    normal_indices = np.where((cfo_values >= lower_bound) & (cfo_values <= upper_bound))[0]
+
+    if plot:
+        print(f"Frames retained: {len(normal_indices)} / {len(cfo_values)}")
+        plt.figure(figsize=(10, 6), dpi=120)
+        plt.hist(cfo_values, bins=100, color='skyblue', edgecolor='black', alpha=0.7)
+        plt.axvline(lower_bound, color='black', linestyle='--', label=f'Lower Bound ({lower_bound:.2f} dB)')
+        plt.axvline(upper_bound, color='red', linestyle='--', label=f'Upper Bound ({upper_bound:.2f} dB)')
+        plt.title(f'CFO Distribution with Outlier Bounds.')
+        plt.xlabel('CFO (Hz)')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.show()
+
+    return normal_indices
+
+def filter_abnormal_rssi(rssi_values, plot=False):
+    """
+    Filters out frames with abnormal RSSI values based on the IQR method,
+    with adjustable sensitivity.
+    
+    Parameters:
+    rssi_values (list or np.ndarray): List or array of RSSI values.
+    sensitivity (float): Sensitivity level between 0 and 1; higher values
+                         make the function stricter and remove more data.
+    
+    Returns:
+    np.ndarray: Indices of frames considered normal based on RSSI.
+    """
+    # Calculate Q1 (25th percentile) and Q3 (75th percentile)
+    q1 = np.percentile(rssi_values, 25)
+    q3 = np.percentile(rssi_values, 75)
+
+    # Calculate the IQR
+    iqr = abs(q3 - q1)
+
+    # Sensitivity
+    sensitivity = 0.5
+    
+    # Define lower and upper bounds
+    lower_bound = q1 - sensitivity * iqr
+    upper_bound = q3 + sensitivity * iqr
+    
+    # Get indices of normal frames
+    normal_indices = np.where((rssi_values >= lower_bound) & (rssi_values <= upper_bound))[0]
+
+    if plot:
+        print(f"Frames retained: {len(normal_indices)} / {len(rssi_values)}")
+        plt.figure(figsize=(10, 6), dpi=50)
+        plt.hist(rssi_values, bins=30, color='skyblue', edgecolor='black', alpha=0.7)
+        plt.axvline(lower_bound, color='red', linestyle='--', label=f'Lower Bound ({lower_bound:.2f} dB)')
+        plt.axvline(upper_bound, color='red', linestyle='--', label=f'Upper Bound ({upper_bound:.2f} dB)')
+        plt.title(f'RSSI Distribution with Outlier Bounds.')
+        plt.xlabel('RSSI (dB)')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.show()
+    
+    return normal_indices

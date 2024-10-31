@@ -20,8 +20,22 @@ def generate_node_ids():
 # - headers: a dictionary of HTTP headers to be used to retrieve data (can be copied from the Chrome session when visiting the orbit-lab.org website)
 # - node_id: node identifier in the format "X-Y" (do NOT add "node" prefix)
 # - show: print out node information if true
-def get_orbit_node_capabilities(headers, node_id, show = False):
+def get_orbit_node_capabilities(header_authorization, node_id, show = False):
     url = f"https://www.orbit-lab.org/cPanel/status/getNodeCapabilities?node=node{node_id}.grid.orbit-lab.org"
+
+    headers = {
+        "Accept": "*/*",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Authorization": header_authorization,
+        "Connection": "keep-alive",
+        "Host": "orbit-lab.org",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+        "X-Requested-With": "XMLHttpRequest"
+    }
 
     response = requests.get(url, headers=headers)
 
@@ -59,20 +73,22 @@ def contains_allowed_substring(input_string, allowed_substrings):
 # Retrieves sensor metadata for a given list of nodes from Orbit API and saves to a JSON file
 # - node_list: a list of Orbit node IDs (in a format "X-Y", without "node" prefix)
 # - file_path: a path to a JSON file in which the function would store the data
-def get_orbit_node_infos(node_list, file_path):
+def get_orbit_node_infos(header_authorization, node_list, file_path):    
     node_infos = {}
 
     for node_id in node_list:
-        print("Processing", node_id)
-        node_info = get_orbit_node_capabilities(node_id)
+        print(f"Processing: {node_id}", end='')
+        node_info = get_orbit_node_capabilities(header_authorization, node_id, show=False)
 
         if node_info is None:
-            print(node_id, ': nothing found')
+            print(' 🤷‍♂️')
         else:
             devices = node_infos[node_id] = node_info['response']['action']['devices']
             if devices: node_infos[node_id] = devices['device']
+            print(' ✅')
         
     save_dict_to_json_file(node_infos, file_path)
+    return node_infos
 
 # Filters the list of available Orbit nodes by availability of specified WiFi chipsets
 # - node_infos: dictionary of all available Orbit nodes (with all of their metadata)

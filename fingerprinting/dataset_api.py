@@ -1,6 +1,10 @@
+from cProfile import label
 import os
 import numpy as np
 import h5py
+import utils
+import matplotlib.pyplot as plt
+import cfo_utils
 import matlab.engine
 from singleton import Singleton
 
@@ -13,6 +17,7 @@ class DatasetAPI(metaclass=Singleton):
     DATASET_V3 = 'v2_jul_21' # 20 Msps, 4-hour period, automated capture, 4 RX nodes
     DATASET_V4 = 'v3_aug_8'  # 25 Msps, 24-hour period, automated capture, 3 RX nodes (1-1, 1-20, 19-19)
     DATASET_WISIG = 'wisig'
+    DATASET_V2V4 = 'v2v4' # here, we combine signals from v2_jul_19 and v3_aug_8 datasets to train multi-day performance
 
     RX_1 = 'node1-1'
     RX_2 = 'node1-20'
@@ -74,13 +79,36 @@ class DatasetAPI(metaclass=Singleton):
             self.mateng.cd(matlab_src_dir, nargout=0)
         else: self.mateng = None
 
-    def _load_dataset_wisig(self):
-        dataset_train_path = os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Train', 'node1-1_non_eq_train.h5')
-        # dataset_train_path = os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Train', 'node1-1_eq_train.h5')
+    def _load_dataset_v2v4(self, rx_name):
+        dataset_train_path = os.path.join(self.dataset_v4_path, rx_name + '_training_2024-08-08_18-37-33.h5')
+        model_path = os.path.join(self.dataset_v2_path, 'my_models')
+        dataset_epoch_paths = [
+            os.path.join(self.dataset_v2_path, rx_name + '_epoch_2024-07-21_06-37-08.h5'),
+            os.path.join(self.dataset_v4_path, rx_name + '_epoch_2024-08-09_09-15-25.h5')
+            # os.path.join(self.dataset_v2_path, rx_name + '_epoch_2024-07-21_11-55-30.h5')
+        ]
+        samp_rate = 25e6
+
+        return dataset_train_path, dataset_epoch_paths, model_path, samp_rate
+
+    # Non-equalized version
+    # def _load_dataset_wisig(self):
+    #     dataset_train_path = os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Train', 'node1-1_non_eq_train.h5')
+    #     model_path = os.path.join(self.dataset_wisig_path, 'my_models')
+    #     dataset_epoch_paths = [
+    #         os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Test', 'non_eq_epoch_2021-03-01_00-00-00.h5'),
+    #         os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_08', 'Test', 'non_eq_epoch_2021-03-08_00-00-00.h5')
+    #     ]
+    #     samp_rate = 25e6
+    #     return dataset_train_path, dataset_epoch_paths, model_path, samp_rate
+
+    # Equalized version
+    def  _load_dataset_wisig(self):
+        dataset_train_path = os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Train', 'node1-1_eq_train.h5')
         model_path = os.path.join(self.dataset_wisig_path, 'my_models')
         dataset_epoch_paths = [
-            os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Test', 'noneq_epoch_2021-03-01_00-00-00.h5'),
-            os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_08', 'Test', 'noneq_epoch_2021-03-08_00-00-00.h5')
+            os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_01', 'Test', 'eq_epoch_2021-03-01_00-00-00.h5'),
+            os.path.join(self.dataset_wisig_path, 'wisig_dataset-2021_03_08', 'Test', 'eq_epoch_2021-03-08_00-00-00.h5')
         ]
         samp_rate = 25e6
         return dataset_train_path, dataset_epoch_paths, model_path, samp_rate
@@ -165,13 +193,25 @@ class DatasetAPI(metaclass=Singleton):
             dataset_train_path, dataset_epoch_paths, model_path, samp_rate = self._load_dataset_v4(rx_name, allowed_epochs)    
         elif dataset_name == self.DATASET_WISIG:
             dataset_train_path, dataset_epoch_paths, model_path, samp_rate = self._load_dataset_wisig()
+        elif dataset_name == self.DATASET_V2V4:
+            dataset_train_path, dataset_epoch_paths, model_path, samp_rate = self._load_dataset_v2v4(rx_name)
         else: print('Invalid dataset name.')
 
-        node_ids_train = self._get_dataset_devices(self.load_raw_dataset(dataset_train_path)[1], show=False)
-        node_ids_epoch = self._get_dataset_devices(self.load_raw_dataset(dataset_epoch_paths[0])[1], show=False)
+        if dataset_name == self.DATASET_WISIG:
+            node_ids_train = [9, 11, 15, 17, 25, 38, 52, 57, 60, 69, 80, 84, 129, 130, 133, 142, 147, 157, 190, 196, 203, 206, 239, 242, 280, 300, 315, 329, 330, 360, 378, 380, 391]
+            node_ids_epoch = [114, 159, 269, 266, 394, 398] # disjointed set of emitters
+            # node_ids_epoch = [9, 11, 15, 17, 25, 38] # joint set of emitters (training subset)
+            # node_ids_epoch = [9, 25, 84, 133, 142]
+            # node_ids_epoch = [9, 11, 15, 17, 25, 38, 52, 57, 60, 69, 80, 84, 129]
+        elif dataset_name == self.DATASET_V2V4:
+            node_ids_train = self._get_dataset_devices(self.load_raw_dataset(dataset_train_path)[1], show=False)
+            node_ids_epoch = [269, 398, 280, 315, 394, 300, 330]
+        else:
+            node_ids_train = self._get_dataset_devices(self.load_raw_dataset(dataset_train_path)[1], show=False)
+            node_ids_epoch = self._get_dataset_devices(self.load_raw_dataset(dataset_epoch_paths[0])[1], show=False)
 
-        print(len(node_ids_train))
-        print(len(node_ids_epoch))
+        print(f"Devices for training: {len(node_ids_train)}")
+        print(f"Devices for testing: {len(node_ids_epoch)}")
 
         return dataset_train_path, dataset_epoch_paths, model_path, node_ids_train, node_ids_epoch, samp_rate
 
@@ -182,7 +222,7 @@ class DatasetAPI(metaclass=Singleton):
 
         data = data[new_order, :]
         labels = labels[new_order]
-        rssi = rssi[new_order] if rssi else None
+        rssi = rssi[new_order] if rssi is not None else None
 
         return data, labels, rssi
 
@@ -198,6 +238,76 @@ class DatasetAPI(metaclass=Singleton):
             iq, labels, rssi = self._shuffle_dataset(iq, labels, rssi)
             
         return iq, labels, rssi
+
+    def load_raw_dataset_wisig_eq(self, path, shuffle=False, compensate_cfo=False):
+        iq, labels, rssi = self.load_raw_dataset(path, shuffle)
+        iq = iq[:, 0:400] # keep only preambles
+
+        if compensate_cfo:
+            if 'non_eq' in path: # we're dealing with non-eq signal and simply need to remove CFO
+                print('Removing CFO from raw signal.')
+                cfo = cfo_utils.extract_data_cfo(iq)
+                iq = cfo_utils.compensate_cfo(iq, cfo)
+            else: # we're dealing with equalized signal and need to extract CFO from non_eq
+                print('Removing CFO from equalized signal.')
+                iq_raw, _, _ = self.load_raw_dataset(path.replace('eq_', 'non_eq_'))
+                cfo = cfo_utils.extract_data_cfo(iq_raw)
+                iq = cfo_utils.compensate_cfo(iq, cfo)
+                # TODO: here we plot CFO before and after compensation across retrieved samples
+                # cfo_new = cfo_utils.extract_data_cfo(iq_eq)
+                # plt.figure(figsize=(10, 8), dpi=80)
+                # plt.plot(cfo[:, 0], 'red', label='coarse')
+                # plt.plot(cfo_new[:, 0], 'blue', label='coarse new')
+                # plt.ylim(-50e3, 50e3)
+                # plt.show()
+        else: print('Not removing CFO.')
+
+        return iq, labels, rssi
+
+    def filter_frames_by_rssi(self, data, labels, rssi, device_frames, show_dist=False):
+        device_count = len(set(labels.flatten()))
+
+        # Note: this function assumes that data is not shuffled and each device has equal # of frames
+        rssi_idx_filtered_all = []
+        for device_start_i in range(0, device_count * device_frames, device_frames):
+            rssi_values = rssi[device_start_i : device_start_i + device_frames]
+            rssi_idx_filtered_all.extend(device_start_i + utils.filter_abnormal_rssi(rssi_values, plot=show_dist))
+
+        data = data[rssi_idx_filtered_all, :]
+        labels = labels[rssi_idx_filtered_all]
+        rssi = np.array(rssi[rssi_idx_filtered_all])
+
+        print(f"Removed {device_count * device_frames - len(labels.flatten())} values.")
+
+        return data, labels, rssi, rssi_idx_filtered_all
+
+    def filter_frames_by_cfo(self, data, labels, rssi, show=False):
+        data_filtered = np.zeros((0, data.shape[1]), dtype=np.complex128)
+        labels_filtered = np.zeros((0, 1))
+        if rssi is not None: rssi_filtered = np.zeros((0, 1))
+
+        for device_id in list(set(labels.flatten())):
+            device_idx = np.where(labels == device_id)[0]
+            device_data = data[device_idx, :]
+            device_labels = labels[device_idx]
+            if rssi is not None: 
+                device_rssi = rssi[device_idx]
+
+            device_cfo = cfo_utils.extract_data_cfo(device_data)
+            cfo_coarse_idx_filtered = utils.filter_abnormal_cfo(device_cfo[:, 0].squeeze(), plot=False)
+            cfo_fine_idx_filtered = utils.filter_abnormal_cfo(device_cfo[:, 1].squeeze(), plot=False)
+            cfo_idx_filtered = np.intersect1d(cfo_coarse_idx_filtered, cfo_fine_idx_filtered)
+
+            if show:
+                print(f"Device ID {device_id}: discarded {device_data.shape[0] - len(cfo_idx_filtered)} frames.")
+
+            data_filtered = np.vstack((data_filtered, device_data[cfo_idx_filtered, :]))
+            labels_filtered = np.vstack((labels_filtered, device_labels[cfo_idx_filtered]))
+            if rssi is not None: 
+                rssi_filtered = np.vstack((rssi_filtered, device_rssi[cfo_idx_filtered]))
+
+        return data_filtered, labels_filtered, rssi_filtered if rssi is not None else None
+
 
     def load_augmented_dataset(self, path, samp_rate, aug_config, shuffle=False):
         # Note: before loading, ensure that there's a MATLAB session named 'mobintel_aug' (or update the name).
@@ -222,13 +332,16 @@ class DatasetAPI(metaclass=Singleton):
         # Filter indexes of frames to keep based on dev_range
         frame_idx_filtered = []
         for dev_idx in dev_range:
-            # Extract only the specified devices, and for each only pkt_range frames
-            frame_idx_device = np.where(labels==int(dev_idx))[0][pkt_range]
+            # Find indexes of frames from a specified device
+            frame_idx_device = np.where(labels.flatten()==int(dev_idx))[0]
+            # Keep a specified sub-range of frames
+            frame_idx_device = frame_idx_device[pkt_range]
+            # Add these label indexes to our combined array
             frame_idx_filtered.extend(frame_idx_device)
         
         # Filter the dataset based on dev_range and pkt_range
         labels = labels[frame_idx_filtered]
-        rssi = rssi[frame_idx_filtered] if rssi else None
+        rssi = rssi[frame_idx_filtered] if rssi is not None else None
         data = data[frame_idx_filtered, :]
 
         return data, labels, rssi

@@ -64,9 +64,8 @@ class TripletNet():
     def __init__(self, seed=42):
         self.rng = np.random.RandomState(seed)
         
-    def create_net(self, embedding_net, alpha, tough_coef=1):
+    def create_net(self, embedding_net, alpha):
         self.alpha = alpha
-        self.tough_coef = tough_coef
         
         input_shape = [self.datashape[1], self.datashape[2], self.datashape[3]]
         input_1 = Input(input_shape)
@@ -88,9 +87,6 @@ class TripletNet():
         pos_dist = K.sum(K.square(anchor - positive), axis=1)
         # Distance between the anchor and the negative
         neg_dist = K.sum(K.square(anchor - negative), axis=1)
-
-        # Make it harder by artificially worsening the distances
-        neg_dist = neg_dist * self.tough_coef  # Lie to the system by making the distance smaller
 
         basic_loss = pos_dist - neg_dist + self.alpha
         loss = K.maximum(basic_loss, 0.0)

@@ -20,19 +20,21 @@ class ExtractorAPI(metaclass=Singleton):
 
     def train(self, data, label, dev_range, model_config, save_path = None):
         batch_size = model_config['batch_size']
-        patience = model_config['patience']
         row = model_config['row']
         loss_type = model_config['loss_type']
         alpha = model_config['alpha']
         
-        ChannelIndSpectrogramObj = ChannelIndSpectrogram()
-        
-        # Convert time-domain IQ samples to channel-independent spectrograms.
-        data = ChannelIndSpectrogramObj.channel_ind_spectrogram(data, row, enable_ind=model_config['enable_ind'])
+        data = ChannelIndSpectrogram().channel_ind_spectrogram(data, row, enable_ind=model_config['enable_ind'])
 
-        print(model_config['enable_ind'])
-        sea.heatmap(data[0, :, :, 0].squeeze())
-        plt.plot()
+        # # Check what the first STFT window looks like, across all available frames
+        # plt.figure(figsize=(10, 8), dpi=80)
+        # sea.heatmap(data[:, :, 0, 0].squeeze())
+        # plt.show()
+
+        # # Check if all frames have similar power amount
+        # plt.figure(figsize=(10, 8), dpi=80)
+        # sea.heatmap(np.mean(data[:, :, :, 0], axis=2).squeeze())
+        # plt.show()
         
         if loss_type == 'triplet_loss': 
             netObj = TripletNet()
@@ -48,11 +50,11 @@ class ExtractorAPI(metaclass=Singleton):
         
         # Create callbacks during training
         callbacks = [
-            EarlyStopping(monitor='val_loss', min_delta = 0, patience = patience, restore_best_weights=True), 
-            ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience = patience, min_lr=1e-6, verbose=1)]
+            EarlyStopping(monitor='val_loss', min_delta=0, patience=10, restore_best_weights=True), 
+            ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=10, min_lr=1e-6, verbose=1)]
         
         # Split the dasetset into validation and training sets.
-        data_train, data_valid, label_train, label_valid = train_test_split(data, label, test_size=0.1, shuffle=True, random_state=42)
+        data_train, data_valid, label_train, label_valid = train_test_split(data, label, test_size=0.2, shuffle=True, random_state=42)
 
         del data, label
         
@@ -62,8 +64,8 @@ class ExtractorAPI(metaclass=Singleton):
         valid_generator = netObj.create_generator(batch_size, dev_range, data_valid, label_valid)
         
         # Use the RMSprop optimizer for training.
-        # opt = RMSprop(learning_rate=1e-3)
-        opt = Adam(learning_rate=1e-3)
+        opt = RMSprop(learning_rate=1e-3)
+        # opt = Adam(learning_rate=1e-3)
         net.compile(loss = identity_loss, optimizer = opt)
 
         # Start training.
@@ -91,7 +93,7 @@ class ExtractorAPI(metaclass=Singleton):
         data_freq = ChannelIndSpectrogram().channel_ind_spectrogram(data, model_config['row'], enable_ind=model_config['enable_ind'])
 
         # Extract fingerprints from the trained model
-        return model.predict(data_freq, verbose=0)
+        return model.predict(data_freq, verbose=0), data_freq
 
 # Example usage
 if __name__ == "__main__":

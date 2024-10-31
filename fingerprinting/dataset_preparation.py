@@ -1,5 +1,7 @@
 import numpy as np
 import h5py
+import seaborn as sea
+import matplotlib.pyplot as plt
 from numpy import sum,sqrt
 from numpy.random import standard_normal, uniform
 from scipy import signal
@@ -91,87 +93,67 @@ class ChannelIndSpectrogram():
     def __init__(self,):
         pass
     
-    def _normalization(self,data):
-        ''' Normalize the signal.'''
-        s_norm = np.zeros(data.shape, dtype=complex)
-        
+    def _normalization(self, data):
+        data_normalized = np.zeros(data.shape, dtype=complex)
         for i in range(data.shape[0]):
-        
-            sig_amplitude = np.abs(data[i])
-            rms = np.sqrt(np.mean(sig_amplitude**2))
-            s_norm[i] = data[i]/rms
-        
-        return s_norm        
+            data_normalized[i] = data[i] / np.sqrt(np.mean(np.abs(data[i])**2))
+        return data_normalized        
 
-    def _spec_crop(self, x):
-        '''Crop the generated channel independent spectrogram.'''
-        num_row = x.shape[0]
-        x_cropped = x[round(num_row*0.3):round(num_row*0.7)]
-    
-        return x_cropped
-
-
-    def _gen_single_channel_ind_spectrogram(self, sig, win_len=256, overlap=128, enable_ind=True):
-        '''
-        _gen_single_channel_ind_spectrogram converts the IQ samples to a channel
-        independent spectrogram according to set window and overlap length.
-        
-        INPUT:
-            SIG is the complex IQ samples.
-            
-            WIN_LEN is the window length used in STFT.
-            
-            OVERLAP is the overlap length used in STFT.
-            
-        RETURN:
-            
-            CHAN_IND_SPEC_AMP is the genereated channel independent spectrogram.
-        '''
-        # Short-time Fourier transform (STFT).
-        f, t, spec = signal.stft(sig, 
-                                window='boxcar', 
-                                nperseg= win_len, 
-                                noverlap= overlap, 
-                                nfft= win_len,
-                                return_onesided=False, 
-                                padded = False, 
-                                boundary = None)
-        
-        # FFT shift to adjust the central frequency.
+    def _channel_ind_spectrogram_single(self, frame, win_len, overlap, enable_ind=True):
+        _, _, spec = signal.stft(frame, window = 'boxcar', 
+                                nperseg = win_len, noverlap = overlap, 
+                                nfft = win_len, return_onesided = False, 
+                                padded = False, boundary = None)
         spec = np.fft.fftshift(spec, axes=0)
 
-        # Leave only magnitudes
-        spec = np.abs(spec)
+        # if enable_ind:
+        #     # Generate channel independent spectrogram.
+        #     chan_ind_spec = spec[:,1:]/spec[:,:-1]    
+        # else:
+        #     chan_ind_spec = spec[:,:]
+        #         return chan_ind_spec
 
-        if enable_ind:
-            # Generate channel independent spectrogram.
-            chan_ind_spec = spec[:,1:]/spec[:,:-1]    
-        else:
-            chan_ind_spec = spec[:,1:]
+        # TODO: remove hardcoded spectrogram independence modifier
+        spec = spec[:, 1:] / spec[:, :-1]    
 
-        chan_ind_spec = np.log10(np.abs(chan_ind_spec)**2)
+        # Return logarithm of the spectrogram magnitude
+        spec = np.log10(np.abs(spec)**2)
 
-        return chan_ind_spec
-    
+        # NEW: Apply standardization to obtain more spectrogram consistency
+        spec = self._standardization(spec)
+
+        return spec
+
+    def _standardization(self, spec):
+        mean = spec.mean()
+        std = spec.std()
+        spec = (spec - mean) / std
+        return spec
+
     def channel_ind_spectrogram(self, data, row, enable_ind):
-        '''
-        channel_ind_spectrogram converts IQ samples to channel independent 
-        spectrograms.
-        
-        INPUT:
-            DATA is the IQ samples.
-            
-        RETURN:
-            DATA_CHANNEL_IND_SPEC is channel independent spectrograms.
-        '''
-        # Normalize the IQ samples.
+        # Normalize IQ samples
         data = self._normalization(data)
 
-        col = int(np.floor((data.shape[1]-row)/(row/2) + 1) - 1)
-        
-        # Convert each packet (IQ samples) to a channel independent spectrogram.
-        data_channel_ind_spec = np.zeros([data.shape[0], row, col, 1])
-        for i in np.arange(data.shape[0]):
-            data_channel_ind_spec[i,:,:,0] = self._gen_single_channel_ind_spectrogram(data[i], win_len=row, overlap=25, enable_ind=enable_ind)
-        return data_channel_ind_spec
+        # TODO: hardcoded values for debugging purposes
+        row = 80 
+        overlap = row * 0.9
 
+        # Produce spectrogram once to dynamically determine input array dimensions
+        test_run = self._channel_ind_spectrogram_single(data[0], win_len=row, overlap=overlap, enable_ind=enable_ind)
+
+        # Convert each packet (IQ samples) to a channel independent spectrogram.
+        data_spectrograms = np.zeros([data.shape[0], test_run.shape[0], test_run.shape[1], 1])
+
+        # Run STFT for each frame separately
+        for i in np.arange(data.shape[0]):
+            data_spectrograms[i,:,:,0] = self._channel_ind_spectrogram_single(data[i], win_len=row, overlap=overlap, enable_ind=enable_ind)
+
+        # TODO: determine whether chopping off spectrogram sections is a good idea
+        # Remove bands that don't contain useful information
+        # remove_bands = list(np.arange(0, 14)) + [16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64] + list(np.arange(67, 80))
+        remove_bands = list(range(0, 14)) + [40] + list(range(67, 80))
+        # remove_windows = list(range(72, 132)) + list(range(230, 321))
+        data_spectrograms = np.delete(data_spectrograms, remove_bands, axis=1)
+        # data_spectrograms = np.delete(data_spectrograms, remove_windows, axis=2)
+
+        return data_spectrograms

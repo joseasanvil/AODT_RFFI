@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
 from scipy.spatial import distance
+import utils
 from dataset_preparation import awgn
 from singleton import Singleton
 from dataset_api import DatasetAPI
@@ -105,23 +106,39 @@ class FingerprintingAPI(metaclass=Singleton):
         plt.show()
 
     def train_models(self, apply_noise=False):
-        # TODO: create the folder "my_models" if it doesn't exist prior to saving the trained model
         train_histories = {}
 
         for rx_id in self.rx_ids:
-            dataset_train_path, _, model_path, node_ids_train, _, samp_rate = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
+            dataset_train_path, dataset_epoch_paths, model_path, node_ids_train, _, samp_rate = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
 
             # Retrieve (and optionally augment) the data to produce data, label variables
             if self.aug_on:
-                data, label, rssi = self.dataset_api.load_augmented_dataset(dataset_train_path, samp_rate, self.aug_config, shuffle=False)
+                data, label, _ = self.dataset_api.load_augmented_dataset(dataset_train_path, samp_rate, self.aug_config, shuffle=False)
             else:
-                data, label, rssi = self.dataset_api.load_raw_dataset(dataset_train_path, shuffle=True)
+                data, label, _ = self.dataset_api.load_raw_dataset(dataset_train_path, shuffle=True)
 
-            # Filter the dataset (pick specified nodes & frames)
-            data, label, rssi = self.dataset_api.filter_dataset(data, label, rssi, node_ids_train, np.arange(0, self.data_config['frame_count_train']))
+            # if self.data_config['dataset_name'] == DatasetAPI.DATASET_V2V4:
+            #     print("Combining training & testing data, since we're working with V2V4.")
+            #     dataset_train2_path = '/home/smazokha2016/Desktop/orbit_dataset_v2_jul19/node1-1_training_2024-07-20_00-50-38.h5'
+            #     data_extra, label_extra, _ = self.dataset_api.load_raw_dataset(dataset_train2_path, shuffle=True)
 
-            # Filter the dataset (pick only a specified number of frames)
-            data = data[:, 0:self.data_config['samples_count']]
+            #     print(f"Nodes from day 1: {list(set(label.flatten()))}")
+            #     print(data.shape)
+            #     print(data_extra.shape)
+
+            #     node_ids_train = list(set(label.flatten()) & set(label_extra.flatten()))
+
+            #     print(f"Nodes from day 1+2: {list(set(node_ids_train))}")
+
+            #     # Here, we're combining both training and testing data
+            #     # However, the filter_dataset functiin will pick only signal from devices which we want (not all of them)
+            #     data = np.concatenate((data, data_extra), axis=0)
+            #     label = np.concatenate((label, label_extra), axis=0)
+            #     rssi = None
+
+            data, label, _ = self.dataset_api.filter_dataset(data, label, _, node_ids_train, np.arange(0, self.data_config['frame_count_train']))
+            data, label, _ = self.dataset_api._shuffle_dataset(data, label, _)
+            data = data[:, 0:self.data_config['samples_count']] # keep only a specified number of samples (usually, preamble length)
 
             # Add AWGN
             if apply_noise:
@@ -132,6 +149,75 @@ class FingerprintingAPI(metaclass=Singleton):
 
             feature_extractor, history = self.extractor_api.train(data, label, node_ids_train, self.model_config, save_path=model_save_path)
 
+            train_histories[rx_id] = history
+            self.models[rx_id] = feature_extractor
+
+        return self.models, train_histories
+
+    def train_models_wisig(self, apply_noise=False, multiday = False, compensate_cfo = False):
+        if self.data_config['dataset_name'] is not DatasetAPI.DATASET_WISIG:
+            print('This function only supports Wisig dataset.')
+            return
+
+        train_histories = {}
+
+        for rx_id in self.rx_ids:
+            dataset_train_path, dataset_epoch_paths, model_path, node_ids_train, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
+
+            # Retrieve (and optionally augment) the data to produce data, label variables
+            data, label, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_train_path, shuffle=False, compensate_cfo=compensate_cfo)
+            data_extra, label_extra, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_epoch_paths[0], shuffle=False, compensate_cfo=compensate_cfo)
+
+            data = np.concatenate((data, data_extra), axis=0)
+            label = np.concatenate((label, label_extra), axis=0)
+
+            # TEMPORARY: filter the first 400 frames from day 1
+            # rssi = np.array([utils.calculate_preamble_rssi(data[i, :]) for i in range(data.shape[0])])
+            # data, label, _, _ = self.dataset_api.filter_frames_by_rssi(data, label, rssi, 400)
+            data, label, _ = self.dataset_api.filter_dataset(data, label, None, node_ids_train, np.arange(0, 400))
+            # data, label, _ = self.dataset_api.filter_frames_by_cfo(data, label, None, show=False)
+            print(data.shape)
+            # ENDOF TEMPORARY
+
+            if multiday:
+                print("Combining data from Day 2")
+
+                # Load training & testing (epoch #1) data
+                # dataset_train_path_day2 = '/home/smazokha2016/Desktop/wisig_dataset_1rx/wisig_dataset-2021_03_08/Train/node1-1_non_eq_train.h5'
+                dataset_train_path_day2 = '/home/smazokha2016/Desktop/wisig_dataset_1rx/wisig_dataset-2021_03_08/Train/node1-1_eq_train.h5'
+                data_train_day2, label_train_day2, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_train_path_day2, shuffle=False, compensate_cfo=compensate_cfo)
+                data_test_day2, label_test_day2, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_epoch_paths[1], shuffle=False, compensate_cfo=compensate_cfo)
+
+                # TEMPORARY: filter the first 400 frames from day 1
+                data_day2 = np.concatenate((data_train_day2, data_test_day2), axis=0)
+                label_day2 = np.concatenate((label_train_day2, label_test_day2), axis=0)
+                # rssi_day2 = np.array([utils.calculate_preamble_rssi(data[i, :]) for i in range(data.shape[0])])
+                # data_day2, label_day2, _, _ = self.dataset_api.filter_frames_by_rssi(data_day2, label_day2, rssi_day2, 400)
+                data_day2, label_day2, _ = self.dataset_api.filter_dataset(data_day2, label_day2, None, node_ids_train, np.arange(0, 400))
+                # data_day2, label_day2, _ = self.dataset_api.filter_frames_by_cfo(data_day2, label_day2, None, show=False)
+                print(data_day2.shape)
+                data = np.concatenate((data, data_day2), axis=0)
+                label = np.concatenate((label, label_day2), axis=0)
+                print(data.shape)
+                # ENDOF TEMPORARY
+
+                # # Combine day 1 and day 2 data
+                # data = np.concatenate((data, data_train_day2, data_test_day2), axis=0)
+                # label = np.concatenate((label, label_train_day2, label_test_day2), axis=0)
+
+            # Filter the dataset (pick specified nodes & frames)
+            print(f'Data before filtering: {data.shape}')
+            # data, label, _ = self.dataset_api.filter_dataset(data, label, None, node_ids_train, np.arange(0, self.data_config['frame_count_train']))
+            data = data[:, 0:self.data_config['samples_count']]
+            print(f'Data after filtering: {data.shape}')
+
+            # Add AWGN
+            if apply_noise:
+                data = awgn(data, np.arange(self.aug_config['awgn'][0][0], self.aug_config['awgn'][0][1]))
+
+            # Train the model
+            model_save_path = os.path.join(model_path, f"extractor_{rx_id}.keras")
+            feature_extractor, history = self.extractor_api.train(data, label, node_ids_train, self.model_config, save_path=model_save_path)
             train_histories[rx_id] = history
             self.models[rx_id] = feature_extractor
 
