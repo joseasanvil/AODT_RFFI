@@ -154,7 +154,7 @@ class FingerprintingAPI(metaclass=Singleton):
 
         return self.models, train_histories
 
-    def train_models_wisig(self, apply_noise=False, multiday = False, compensate_cfo = False):
+    def train_models_wisig(self, apply_noise=False, multiday=False, compensate_cfo=False, augment_cfo=False):
         if self.data_config['dataset_name'] is not DatasetAPI.DATASET_WISIG:
             print('This function only supports Wisig dataset.')
             return
@@ -165,8 +165,8 @@ class FingerprintingAPI(metaclass=Singleton):
             dataset_train_path, dataset_epoch_paths, model_path, node_ids_train, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
 
             # Retrieve (and optionally augment) the data to produce data, label variables
-            data, label, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_train_path, shuffle=False, compensate_cfo=compensate_cfo)
-            data_extra, label_extra, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_epoch_paths[0], shuffle=False, compensate_cfo=compensate_cfo)
+            data, label, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_train_path, shuffle=False, compensate_cfo=compensate_cfo, augment_cfo=augment_cfo)
+            data_extra, label_extra, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_epoch_paths[0], shuffle=False, compensate_cfo=compensate_cfo, augment_cfo=augment_cfo)
 
             data = np.concatenate((data, data_extra), axis=0)
             label = np.concatenate((label, label_extra), axis=0)
@@ -174,7 +174,7 @@ class FingerprintingAPI(metaclass=Singleton):
             # TEMPORARY: filter the first 400 frames from day 1
             # rssi = np.array([utils.calculate_preamble_rssi(data[i, :]) for i in range(data.shape[0])])
             # data, label, _, _ = self.dataset_api.filter_frames_by_rssi(data, label, rssi, 400)
-            data, label, _ = self.dataset_api.filter_dataset(data, label, None, node_ids_train, np.arange(0, 400))
+            data, label, _ = self.dataset_api.filter_dataset(data, label, None, node_ids_train, np.arange(0, 500 * 4))
             # data, label, _ = self.dataset_api.filter_frames_by_cfo(data, label, None, show=False)
             print(data.shape)
             # ENDOF TEMPORARY
@@ -185,15 +185,15 @@ class FingerprintingAPI(metaclass=Singleton):
                 # Load training & testing (epoch #1) data
                 # dataset_train_path_day2 = '/home/smazokha2016/Desktop/wisig_dataset_1rx/wisig_dataset-2021_03_08/Train/node1-1_non_eq_train.h5'
                 dataset_train_path_day2 = '/home/smazokha2016/Desktop/wisig_dataset_1rx/wisig_dataset-2021_03_08/Train/node1-1_eq_train.h5'
-                data_train_day2, label_train_day2, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_train_path_day2, shuffle=False, compensate_cfo=compensate_cfo)
-                data_test_day2, label_test_day2, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_epoch_paths[1], shuffle=False, compensate_cfo=compensate_cfo)
+                data_train_day2, label_train_day2, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_train_path_day2, shuffle=False, compensate_cfo=compensate_cfo, augment_cfo=augment_cfo)
+                data_test_day2, label_test_day2, _ = self.dataset_api.load_raw_dataset_wisig_eq(dataset_epoch_paths[1], shuffle=False, compensate_cfo=compensate_cfo, augment_cfo=augment_cfo)
 
                 # TEMPORARY: filter the first 400 frames from day 1
                 data_day2 = np.concatenate((data_train_day2, data_test_day2), axis=0)
                 label_day2 = np.concatenate((label_train_day2, label_test_day2), axis=0)
                 # rssi_day2 = np.array([utils.calculate_preamble_rssi(data[i, :]) for i in range(data.shape[0])])
                 # data_day2, label_day2, _, _ = self.dataset_api.filter_frames_by_rssi(data_day2, label_day2, rssi_day2, 400)
-                data_day2, label_day2, _ = self.dataset_api.filter_dataset(data_day2, label_day2, None, node_ids_train, np.arange(0, 400))
+                data_day2, label_day2, _ = self.dataset_api.filter_dataset(data_day2, label_day2, None, node_ids_train, np.arange(0, 500 * 2))
                 # data_day2, label_day2, _ = self.dataset_api.filter_frames_by_cfo(data_day2, label_day2, None, show=False)
                 print(data_day2.shape)
                 data = np.concatenate((data, data_day2), axis=0)

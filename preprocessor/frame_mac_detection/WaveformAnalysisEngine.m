@@ -283,7 +283,6 @@ classdef WaveformAnalysisEngine < handle
                         end
 
                     case "L-SIG"
-                        fprintf('8');
                         % Format detect and L-SIG decode
                         packetNum = packetNum+1;
 
@@ -362,7 +361,6 @@ classdef WaveformAnalysisEngine < handle
                         end
 
                     case "EHT"
-                        fprintf('7');
                         [state,rxPSDU,cfgRx,res] = recoverEHT(rxPacket,packetRes.LSIG.PreEHTChanEst,preRes.NoiseEstNonHT,chanBW,packetRes.LSIG.Info.Length,dataRecOpt);
 
                         % Adjust measured powers to account for L-STF AGC scaling
@@ -375,7 +373,6 @@ classdef WaveformAnalysisEngine < handle
                         packetRes.EHTData = res.EHTData;
 
                     case "HE"
-                        fprintf('6');
                         [state,rxPSDU,cfgRx,res] = recoverHE(rxPacket,packetRes.LSIG.PreHEChanEst,preRes.NoiseEstNonHT,chanBW,packetRes.LSIG.Info.Length,format,dataRecOpt);
 
                         % Adjust measured powers to account for L-STF AGC scaling
@@ -388,7 +385,6 @@ classdef WaveformAnalysisEngine < handle
                         packetRes.HEData = res.HEData;
 
                     case "Non-HT"
-                        fprintf('5');
                         [rxPSDU,cfgRx,resNonHTData] = recoverNonHT(rxPacket,preRes.ChanEstNonHT,preRes.NoiseEstNonHT,chanBW,packetRes.LSIG.Info.MCS,packetRes.LSIG.Info.Length,dataRecOpt);
 
                         % Adjust measured powers to account for L-STF AGC scaling
@@ -401,7 +397,6 @@ classdef WaveformAnalysisEngine < handle
                         state.status = "Success";
 
                     case "VHT"
-                        fprintf('4');
                         [state,rxPSDU,cfgRx,res] = recoverVHT(rxPacket,preRes.ChanEstNonHT,preRes.NoiseEstNonHT,chanBW,packetRes.LSIG.Bits,dataRecOpt);
 
                         % Adjust measured powers to account for L-STF AGC scaling
@@ -414,7 +409,6 @@ classdef WaveformAnalysisEngine < handle
                         packetRes.VHTData = res.VHTData;
 
                     case "HT-MF"
-                        fprintf('3');
                         [state,rxPSDU,cfgRx,res] = recoverHTMF(rxPacket,preRes.ChanEstNonHT,preRes.NoiseEstNonHT,chanBW,dataRecOpt);
 
                         % Adjust measured powers to account for L-STF AGC scaling
@@ -426,7 +420,6 @@ classdef WaveformAnalysisEngine < handle
                         packetRes.HTData = res.HTData;
 
                     case "A-MPDU"
-                        fprintf('2');
                         if ~iscell(rxPSDU)
                             % HT/VHT is single user so make like SU MU
                             rxPSDU = {rxPSDU};
@@ -485,7 +478,6 @@ classdef WaveformAnalysisEngine < handle
                         state.nextState = "RxSuccess";
 
                     case "MPDU"
-                        fprintf('1');
                         % Decode PSDU
                         [mpduConfig,mpduPayload,mpduDecodeStatus] = wlanMPDUDecode(rxPSDU,cfgRx,'DataFormat','bits');
 
@@ -510,7 +502,6 @@ classdef WaveformAnalysisEngine < handle
 
                     case "RxSuccess"
                         % Continue search
-                        fprintf('!');
                         packetRes.Status = "Success";
                         if strcmp(packetRes.Format,'EHT-MU') && (packetRes.PHYConfig(1).PPDUType==wlan.type.EHTPPDUType.ndp)
                             % Packet contents not applied for EHT-NDP type
@@ -521,7 +512,6 @@ classdef WaveformAnalysisEngine < handle
                         state.nextState =  "Preamble";
 
                     case "RxError"
-                        fprintf('-');
                         % Continue search
                         packetRes.Status = state.status;
                         results = [results {packetRes}]; %#ok<AGROW>

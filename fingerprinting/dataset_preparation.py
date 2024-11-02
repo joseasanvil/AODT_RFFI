@@ -156,4 +156,6 @@ class ChannelIndSpectrogram():
         data_spectrograms = np.delete(data_spectrograms, remove_bands, axis=1)
         # data_spectrograms = np.delete(data_spectrograms, remove_windows, axis=2)
 
+        # sea.heatmap(data_spectrograms[0, :, :, 0])
+
         return data_spectrograms

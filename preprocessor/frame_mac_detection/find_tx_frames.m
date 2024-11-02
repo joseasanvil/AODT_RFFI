@@ -4,9 +4,9 @@
 
 function T = find_tx_frames(filepath, bw, samp_rate, search_mac_tx, preamble_len)
     X = read_iq(filepath);
-    figure;
-    plot(1:length(X), real(X));
-    X = X(1:floor(length(X))); % TODO: only for larger files
+    % figure;
+    % plot(1:length(X), real(X));
+    % X = X(1:floor(length(X))); % TODO: only for larger files
 
     % 1. Analyze the waveform
     analyzer = WaveformAnalyzer();
@@ -19,25 +19,24 @@ function T = find_tx_frames(filepath, bw, samp_rate, search_mac_tx, preamble_len
     macs = {};
     
     fprintf('Searching for %s\n', search_mac_tx);
-    printout_counter = 0;
+    % printout_counter = 0;
     for mac_i = 1:size(analyzer.Results, 2)
         item = analyzer.Results{mac_i};
         if item.MAC.Processed == 0
             continue;
         end
 
-        fprintf('------------')
-        fprintf(item.MAC.MPDU.Config.FrameType);
-        fprintf('\n');
-        fprintf(item.MAC.MPDU.Config.Address1);
-        fprintf('\n');
-        fprintf(item.MAC.MPDU.Config.Address2);
-        fprintf('\n');
-        fprintf(item.MAC.MPDU.Config.Address3)
-        fprintf('\n')
+        % fprintf('------------')
+        % fprintf(item.MAC.MPDU.Config.FrameType);
+        % fprintf('\n');
+        % fprintf(item.MAC.MPDU.Config.Address1);
+        % fprintf('\n');
+        % fprintf(item.MAC.MPDU.Config.Address2);
+        % fprintf('\n');
+        % fprintf(item.MAC.MPDU.Config.Address3)
+        % fprintf('\n')
 
-
-        mac_summary = macSummary(analyzer, mac_i, true);
+        mac_summary = macSummary(analyzer, mac_i, false);
         if isempty(mac_summary)
             continue;
         end
@@ -45,17 +44,19 @@ function T = find_tx_frames(filepath, bw, samp_rate, search_mac_tx, preamble_len
         % frame_rx_mac = parse_mac_address(mac_summary{1, 1}); % MAC address of the AP
         frame_tx_mac = parse_mac_address(mac_summary{1, 2}); % MAC address of the emitter
 
-        fprintf(frame_tx_mac);
+        if strcmp(frame_tx_mac, 'NA') | strcmp(frame_tx_mac, 'Unknown') | length(frame_tx_mac) ~= 17
+            continue;
+        end
     
         % Filter frames based on the TX MAC address
-        % if strcmp(frame_tx_mac, search_mac_tx)
-        if true
-            fprintf('.');
-            printout_counter = printout_counter + 1;
-            if printout_counter == 40
-                printout_counter = 0;
-                fprintf('\n');
-            end
+        if length(search_mac_tx) == 0 | strcmp(frame_tx_mac, search_mac_tx)
+            % fprintf('.');
+            % disp(frame_tx_mac);
+            % printout_counter = printout_counter + 1;
+            % if printout_counter == 40
+            %     printout_counter = 0;
+            %     fprintf('\n');
+            % end
     
             % Extract start & end indexes for the frame preamble
             x = analyzer.Results{mac_i};

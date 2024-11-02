@@ -434,7 +434,7 @@ classdef WaveformAnalyzer < WaveformAnalysisEngine
             sampleSpan = pktEnd + 2*lstfLength; % Number samples to plot
             % Plot as much of the packet (and L-STF worth of samples either
             % side of the packet) as we can
-            plotIdx = sampleOffset:min(sampleSpan,numel(obj.rawWaveform));
+            plotIdx = sampleOffset:min(sampleSpan,numel(obj.rawWaveform));f
 
             xlim([plotIdx(1) plotIdx(end)]);
             title(sprintf('Power of time-domain samples (packet %d)',pktNum));

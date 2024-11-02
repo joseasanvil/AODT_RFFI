@@ -1,5 +1,7 @@
 import numpy as np
+import scipy.stats as stats
 import scipy.signal as signal
+import matplotlib.pyplot as plt
 
 def cfo_estimate(x, D):
     num_samples = len(x)
@@ -89,7 +91,42 @@ def compensate_cfo(data, cfo):
     """
     compensated_data = np.zeros_like(data)
     for i in range(data.shape[0]):
-        preamble_cfo = cfo[i, 0] + cfo[i, 1]
+        preamble_cfo = cfo[i]
         phase = np.arange(1, len(data[i, :]) + 1) / 20e6 * 2 * np.pi * (-1 * preamble_cfo)
         compensated_data[i, :] = data[i, :] * np.exp(1j * phase)
     return compensated_data
+
+def generate_cfo_values(n_samples, distribution, ppm_range=[-40, 40], freq=2.4e9, rnd=np.random.default_rng(), show=False):
+    """
+    Generate n_samples CFO values using a given distribution.
+    Accepted distribution types: 
+    - uniform
+    - gaussian
+    """
+    if n_samples <= 0 or distribution not in ['uniform', 'gaussian']:
+        raise ValueError("Invalid input parameters")
+    
+    if distribution == 'uniform':
+        dist = stats.uniform(loc=ppm_range[0], scale=abs(ppm_range[1] - ppm_range[0]))
+    elif distribution == 'gaussian':
+        mean = np.mean(ppm_range)
+        two_sigma = 2 # less pointy :D 
+        # two_sigma = 4
+        # two_sigma = 6 # more pointy :D 
+        dist = stats.truncnorm(
+            a=(ppm_range[0] - mean) / (abs(ppm_range[1] - ppm_range[0])/two_sigma),
+            b=(ppm_range[1] - mean) / (abs(ppm_range[1] - ppm_range[0])/two_sigma),
+            loc=mean,
+            scale=(abs(ppm_range[1] - ppm_range[0])/two_sigma))
+        
+    ppm_values = dist.rvs(size=n_samples, random_state=rnd)
+    cfo_hz = np.array(ppm_values * 1e-6 * freq)
+
+    if show:
+        plt.figure(figsize=(10, 8), dpi=80)
+        plt.hist(cfo_hz / 1e3, bins=100)
+        plt.ylabel('Sample Frequency')
+        plt.xlabel('CFO, kHz')
+        plt.show()
+
+    return cfo_hz

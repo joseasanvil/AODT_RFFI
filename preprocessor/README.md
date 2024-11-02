@@ -31,7 +31,7 @@ On macOS:
     * `COMPLETED_SESSIONS`: this is an array that you can keep empty, unless you ran this task before and have sessions you don't want to process again;
     * `MATLAB_SESSION_NAMES`: this is a list of Matlab session names from the previous step.
 
-4. Launch the pre-processing script: `python3 prepare.py`
+4. Launch the pre-processing script: `python3 prepare_orbit.py`
     * Specify the preamble length: `400 for 25 Msps, 320 for 20 Msps`
 
 5. Done! Please note that this script can take a long time to process. Additionally, if you download data from S3, consider the costs associated with transfering the data to your device, as this task may incur significant costs.

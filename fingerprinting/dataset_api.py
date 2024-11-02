@@ -1,4 +1,5 @@
 from cProfile import label
+from importlib.metadata import distribution
 import os
 import numpy as np
 import h5py
@@ -199,8 +200,9 @@ class DatasetAPI(metaclass=Singleton):
 
         if dataset_name == self.DATASET_WISIG:
             node_ids_train = [9, 11, 15, 17, 25, 38, 52, 57, 60, 69, 80, 84, 129, 130, 133, 142, 147, 157, 190, 196, 203, 206, 239, 242, 280, 300, 315, 329, 330, 360, 378, 380, 391]
-            node_ids_epoch = [159, 269, 266, 394, 398] # disjoint set of emitters
-            # node_ids_epoch = [9, 11, 17, 25, 38] # joint set of emitters (training subset)
+            # node_ids_epoch = [114, 159, 269, 266, 394, 398] # disjoint set of emitters
+            # node_ids_epoch = [114, 159, 394, 398, 267, 270] # fixed after checking wisig data
+            node_ids_epoch = [9, 11, 15, 17, 25, 38] # joint set of emitters (training subset)
         elif dataset_name == self.DATASET_V2V4:
             node_ids_train = self._get_dataset_devices(self.load_raw_dataset(dataset_train_path)[1], show=False)
             node_ids_epoch = [269, 398, 280, 315, 394, 300, 330]
@@ -237,20 +239,21 @@ class DatasetAPI(metaclass=Singleton):
             
         return iq, labels, rssi
 
-    def load_raw_dataset_wisig_eq(self, path, shuffle=False, compensate_cfo=False):
+    def load_raw_dataset_wisig_eq(self, path, shuffle=False, compensate_cfo=False, augment_cfo=False):
         iq, labels, rssi = self.load_raw_dataset(path, shuffle)
         iq = iq[:, 0:400] # keep only preambles
 
+        # First (if needed), compensate CFO, before (optionally) applying randomly-generated CFO with a specified distribution
         if compensate_cfo:
             if 'non_eq' in path: # we're dealing with non-eq signal and simply need to remove CFO
                 print('Removing CFO from raw signal.')
                 cfo = cfo_utils.extract_data_cfo(iq)
-                iq = cfo_utils.compensate_cfo(iq, cfo)
+                iq = cfo_utils.compensate_cfo(iq, cfo[:, 0] + cfo[:, 1])
             else: # we're dealing with equalized signal and need to extract CFO from non_eq
                 print('Removing CFO from equalized signal.')
                 iq_raw, _, _ = self.load_raw_dataset(path.replace('eq_', 'non_eq_'))
                 cfo = cfo_utils.extract_data_cfo(iq_raw)
-                iq = cfo_utils.compensate_cfo(iq, cfo)
+                iq = cfo_utils.compensate_cfo(iq, cfo[:, 0] + cfo[:, 1])
                 # TODO: here we plot CFO before and after compensation across retrieved samples
                 # cfo_new = cfo_utils.extract_data_cfo(iq)
                 # plt.figure(figsize=(10, 8), dpi=80)
@@ -260,6 +263,37 @@ class DatasetAPI(metaclass=Singleton):
                 # plt.title('Day 2: CFO removal')
                 # plt.show()
         else: print('Not removing CFO.')
+
+        # Second (if needed), apply randomly-generated CFO -- but with a distribution that we control
+        if augment_cfo:
+            augment_mult = 4
+            # augment_mult = 2
+            ppm_range = [-40, 40] # idealistic possible values
+            # ppm_range = [-14, -2.5] # observed values
+            distribution = 'uniform'
+            freq = 2.4e9
+            rnd = np.random.default_rng(42)
+
+            print(f'Augmenting the dataset: x{augment_mult}, CFO range: [{ppm_range[0]}, {ppm_range[1]}], dist: {distribution}')
+
+            # 1. Replicate the data K times
+            iq = np.repeat(iq, augment_mult, axis=0)
+            labels = np.repeat(labels, augment_mult, axis=0)
+            if rssi is not None: rssi = np.repeat(rssi, augment_mult, axis=0)
+
+            # # 2. Generate CFO values for augmentation
+            # cfo_values = cfo_utils.generate_cfo_values(
+            #     n_samples=iq.shape[0], 
+            #     distribution=distribution,
+            #     ppm_range=ppm_range,
+            #     freq=freq,
+            #     rnd=rnd,
+            #     show=False)
+
+            # # 3. Apply generated CFO values to the dataset
+            # iq = cfo_utils.compensate_cfo(iq, cfo_values)
+        
+        else: print('Not augmenting CFO.')
 
         return iq, labels, rssi
 
