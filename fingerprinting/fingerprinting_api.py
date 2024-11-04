@@ -9,13 +9,12 @@ from datetime import datetime
 from scipy.spatial import distance
 import utils
 from dataset_preparation import awgn
-from singleton import Singleton
 from dataset_api import DatasetAPI
 from extractor_api import ExtractorAPI
 
 np.random.seed(42)
 
-class FingerprintingAPI(metaclass=Singleton):
+class FingerprintingAPI():
 
     VECTOR_SEARCH_MAX_RESULTS = 3
 
@@ -109,32 +108,13 @@ class FingerprintingAPI(metaclass=Singleton):
         train_histories = {}
 
         for rx_id in self.rx_ids:
-            dataset_train_path, dataset_epoch_paths, model_path, node_ids_train, _, samp_rate = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
+            dataset_train_path, _, model_path, node_ids_train, _, samp_rate = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
 
             # Retrieve (and optionally augment) the data to produce data, label variables
             if self.aug_on:
                 data, label, _ = self.dataset_api.load_augmented_dataset(dataset_train_path, samp_rate, self.aug_config, shuffle=False)
             else:
                 data, label, _ = self.dataset_api.load_raw_dataset(dataset_train_path, shuffle=True)
-
-            # if self.data_config['dataset_name'] == DatasetAPI.DATASET_V2V4:
-            #     print("Combining training & testing data, since we're working with V2V4.")
-            #     dataset_train2_path = '/home/smazokha2016/Desktop/orbit_dataset_v2_jul19/node1-1_training_2024-07-20_00-50-38.h5'
-            #     data_extra, label_extra, _ = self.dataset_api.load_raw_dataset(dataset_train2_path, shuffle=True)
-
-            #     print(f"Nodes from day 1: {list(set(label.flatten()))}")
-            #     print(data.shape)
-            #     print(data_extra.shape)
-
-            #     node_ids_train = list(set(label.flatten()) & set(label_extra.flatten()))
-
-            #     print(f"Nodes from day 1+2: {list(set(node_ids_train))}")
-
-            #     # Here, we're combining both training and testing data
-            #     # However, the filter_dataset functiin will pick only signal from devices which we want (not all of them)
-            #     data = np.concatenate((data, data_extra), axis=0)
-            #     label = np.concatenate((label, label_extra), axis=0)
-            #     rssi = None
 
             data, label, _ = self.dataset_api.filter_dataset(data, label, _, node_ids_train, np.arange(0, self.data_config['frame_count_train']))
             data, label, _ = self.dataset_api._shuffle_dataset(data, label, _)
@@ -149,6 +129,59 @@ class FingerprintingAPI(metaclass=Singleton):
 
             feature_extractor, history = self.extractor_api.train(data, label, node_ids_train, self.model_config, save_path=model_save_path)
 
+            train_histories[rx_id] = history
+            self.models[rx_id] = feature_extractor
+
+        return self.models, train_histories
+
+    def train_models_orbit_v2v4(self, apply_noise=False, ndays=1, augment=False, augment_cfo=False, augment_multiplier=1):
+        if self.data_config['dataset_name'] != DatasetAPI.DATASET_V2V4:
+            print('This function only supports the Orbit v2v4 dataset.')
+            return
+
+        # frames_per_device = 500
+        frames_per_device = 200
+        
+        train_histories = {}
+
+        for rx_id in self.rx_ids:
+            dataset_train_paths, _, model_path, node_ids_train, _, _ = self.dataset_api.load_dataset_info(self.data_config['dataset_name'], rx_id, None)
+
+            data = np.zeros((0, self.data_config['samples_count']), dtype=complex)
+            labels = np.zeros((0, 1))
+                
+            print(f"Training the model using data from {ndays} days.")
+            for day in range(ndays):
+                # day=1
+                data_day, labels_day, _ = self.dataset_api.load_raw_dataset(dataset_train_paths[day], shuffle=False)
+                print(f'Data raw: {data_day.shape}')
+
+                print(sorted(list(set(labels_day.flatten()))))
+                print(sorted(node_ids_train))
+
+                data_day, labels_day, _ = self.dataset_api.filter_dataset(data_day, labels_day, None, node_ids_train, np.arange(frames_per_device))
+                data_day = data_day[:, 0:self.data_config['samples_count']]
+                print(f'Data after filtering: {data_day.shape}')
+
+                # Augment the dataset:
+                # - multiply the dataset (replicate the same data)
+                # - augment CFO (add randomly generated CFO values; only applicable if we actually removed CFO prior to that)
+                if augment:
+                    data_day, labels_day, _ = self.dataset_api.augment_dataset(data_day, labels_day, None, augment_cfo=augment_cfo, multiplier=augment_multiplier)
+                    print(f'Data after augmentation: {data_day.shape}')
+
+                # Add day's data to the unified arrays
+                data = np.concatenate((data, data_day), axis=0)
+                labels = np.concatenate((labels, labels_day), axis=0)
+
+            print(f'Final data: {data.shape}')
+
+            if apply_noise:
+                data = awgn(data, np.arange(self.aug_config['awgn'][0][0], self.aug_config['awgn'][0][1]))
+
+            # Train the model
+            model_save_path = os.path.join(model_path, f"extractor_{rx_id}.keras")
+            feature_extractor, history = self.extractor_api.train(data, labels, node_ids_train, self.model_config, save_path=model_save_path)
             train_histories[rx_id] = history
             self.models[rx_id] = feature_extractor
 
@@ -181,6 +214,9 @@ class FingerprintingAPI(metaclass=Singleton):
                 data_day, label_day, _ = self.dataset_api.filter_dataset(data_day, label_day, None, node_ids_train, np.arange(0, int(frames_per_device * train_split)))
                 print(f'Data after filtering: {data_day.shape}')
 
+                # Filter the dataset (pick specified nodes & frames)
+                data_day = data_day[:, 0:self.data_config['samples_count']]
+
                 # Augment the dataset:
                 # - multiply the dataset (replicate the same data)
                 # - augment CFO (add randomly generated CFO values; only applicable if we actually removed CFO prior to that)
@@ -191,9 +227,6 @@ class FingerprintingAPI(metaclass=Singleton):
                 # Add day's data to the unified arrays
                 data = np.concatenate((data, data_day), axis=0)
                 labels = np.concatenate((labels, label_day), axis=0)
-            
-            # Filter the dataset (pick specified nodes & frames)
-            data = data[:, 0:self.data_config['samples_count']]
 
             print(f'Final data: {data.shape}')
             
@@ -235,6 +268,9 @@ class FingerprintingAPI(metaclass=Singleton):
                 data_day, label_day, _ = self.dataset_api.filter_dataset(data_day, label_day, None, node_ids_train, np.arange(0, int(frames_per_device * train_split)))
                 print(f'Data after filtering: {data_day.shape}')
 
+                # Filter the dataset (pick specified nodes & frames)
+                data_day = data_day[:, 0:self.data_config['samples_count']]
+
                 # Augment the dataset:
                 # - multiply the dataset (replicate the same data)
                 # - augment CFO (add randomly generated CFO values; only applicable if we actually removed CFO prior to that)
@@ -245,9 +281,6 @@ class FingerprintingAPI(metaclass=Singleton):
                 # Add day's data to the unified arrays
                 data = np.concatenate((data, data_day), axis=0)
                 labels = np.concatenate((labels, label_day), axis=0)
-            
-            # Filter the dataset (pick specified nodes & frames)
-            data = data[:, 0:self.data_config['samples_count']]
 
             print(f'Final data: {data.shape}')
             

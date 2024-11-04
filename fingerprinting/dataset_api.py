@@ -7,11 +7,10 @@ import utils
 import matplotlib.pyplot as plt
 import cfo_utils
 import matlab.engine
-from singleton import Singleton
 
 np.random.seed(42)
 
-class DatasetAPI(metaclass=Singleton):
+class DatasetAPI():
 
     DATASET_V1 = 'v1_jul_13' # 25 Msps, 2-hour period, manual capture, only one RX node (node1-1)
     DATASET_V2 = 'v2_jul_19' # 25 Msps, 24-hour period, automated capture, 4 RX nodes
@@ -83,16 +82,17 @@ class DatasetAPI(metaclass=Singleton):
         else: self.mateng = None
 
     def _load_dataset_v2v4(self, rx_name):
-        dataset_train_path = os.path.join(self.dataset_v4_path, rx_name + '_training_2024-08-08_18-37-33.h5')
-        model_path = os.path.join(self.dataset_v2_path, 'my_models')
+        dataset_train_paths = [
+            os.path.join(self.dataset_v2_path, rx_name + '_training_2024-07-20_00-50-38.h5'),
+            os.path.join(self.dataset_v4_path, rx_name + '_training_2024-08-08_18-37-33.h5')
+        ]
         dataset_epoch_paths = [
             os.path.join(self.dataset_v2_path, rx_name + '_epoch_2024-07-21_06-37-08.h5'),
             os.path.join(self.dataset_v4_path, rx_name + '_epoch_2024-08-09_09-15-25.h5')
-            # os.path.join(self.dataset_v2_path, rx_name + '_epoch_2024-07-21_11-55-30.h5')
         ]
+        model_path = os.path.join(self.dataset_v2_path, 'my_models')
         samp_rate = 25e6
-
-        return dataset_train_path, dataset_epoch_paths, model_path, samp_rate
+        return dataset_train_paths, dataset_epoch_paths, model_path, samp_rate
 
     def  _load_dataset_wisig_old(self, equalized=False):
         equalized_str = 'eq' if equalized else 'non_eq'
@@ -205,6 +205,7 @@ class DatasetAPI(metaclass=Singleton):
             # Note, in this case, we return a list of paths to h5 files without train/test split; the splitting will need to be done separately
             dataset_paths, model_path, samp_rate = self._load_dataset_wisig_new(equalized=wisig_equalized)
         elif dataset_name == self.DATASET_V2V4:
+            # Note: in this case, dataset_train_path actually returns a list of two paths (day #1 and day #2)
             dataset_train_path, dataset_epoch_paths, model_path, samp_rate = self._load_dataset_v2v4(rx_name)
         else: print('Invalid dataset name.')
 
@@ -216,10 +217,10 @@ class DatasetAPI(metaclass=Singleton):
             node_ids_train = [60, 69, 80, 114, 130, 133, 142, 147, 196, 203, 206, 239, 266, 269, 280, 315, 380, 391, 398]
             node_ids_epoch = [9, 11, 15, 17, 38, 57] if wisig_disjoint else [269, 280, 315, 380, 391, 398]
             # node_ids_epoch = [269, 280, 315, 380, 391, 398] if wisig_disjoint else node_ids_train
-
             return dataset_paths, model_path, node_ids_train, node_ids_epoch, samp_rate
         elif dataset_name == self.DATASET_V2V4:
-            node_ids_train = self._get_dataset_devices(self.load_raw_dataset(dataset_train_path)[1], show=False)
+            # node_ids_train = self._get_dataset_devices(self.load_raw_dataset(dataset_train_path[0])[1], show=False)
+            node_ids_train = [11, 17, 25, 38, 52, 57, 60, 129, 133, 147, 157, 159, 190, 196, 206, 216, 266, 391, 399]
             node_ids_epoch = [269, 398, 280, 315, 394, 300, 330]
         else:
             node_ids_train = self._get_dataset_devices(self.load_raw_dataset(dataset_train_path)[1], show=False)
@@ -395,22 +396,25 @@ class DatasetAPI(metaclass=Singleton):
         if dev_range is None:
             dev_range = set(labels.flatten())
 
-        # Filter indexes of frames to keep based on dev_range
-        frame_idx_filtered = []
-        for dev_idx in dev_range:
-            # Find indexes of frames from a specified device
-            frame_idx_device = np.where(labels.flatten()==int(dev_idx))[0]
-            # Keep a specified sub-range of frames
-            frame_idx_device = frame_idx_device[pkt_range]
-            # Add these label indexes to our combined array
-            frame_idx_filtered.extend(frame_idx_device)
-        
-        # Filter the dataset based on dev_range and pkt_range
-        labels = labels[frame_idx_filtered]
-        rssi = rssi[frame_idx_filtered] if rssi is not None else None
-        data = data[frame_idx_filtered, :]
+        try:
+            # Filter indexes of frames to keep based on dev_range
+            frame_idx_filtered = []
+            for dev_idx in dev_range:
+                # Find indexes of frames from a specified device
+                frame_idx_device = np.where(labels.flatten()==int(dev_idx))[0]
+                # Keep a specified sub-range of frames
+                frame_idx_device = frame_idx_device[pkt_range]
+                # Add these label indexes to our combined array
+                frame_idx_filtered.extend(frame_idx_device)
+            
+            # Filter the dataset based on dev_range and pkt_range
+            labels = labels[frame_idx_filtered]
+            rssi = rssi[frame_idx_filtered] if rssi is not None else None
+            data = data[frame_idx_filtered, :]
 
-        return data, labels, rssi
+            return data, labels, rssi
+        except Exception as e:
+            return None, None, None
 
     def rssi_to_weight(self, rssi_dbm):
         # Convert RSSI to weighting factor by normalizing between [0, 1]

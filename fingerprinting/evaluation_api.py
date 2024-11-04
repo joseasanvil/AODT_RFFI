@@ -10,14 +10,13 @@ from dataset_api import DatasetAPI
 from extractor_api import ExtractorAPI
 from fingerprinting_api import FingerprintingAPI
 from dataset_preparation import ChannelIndSpectrogram
-from singleton import Singleton
 from dataset_preparation import awgn
 from scipy.spatial.distance import cdist
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import roc_curve, auc, confusion_matrix, accuracy_score
 from sklearn.neighbors import KNeighborsClassifier
 
-class EvaluationAPI(metaclass=Singleton):
+class EvaluationAPI():
 
     def __init__(self, rx_ids, data_config, aug_config, model_config, root_dir, matlab_src_dir, matlab_session_id, aug_on):
         self.rx_ids = rx_ids

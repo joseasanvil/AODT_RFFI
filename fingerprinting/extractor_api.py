@@ -1,12 +1,9 @@
 import numpy as np
-import visualkeras
-import utils
 from sklearn.model_selection import train_test_split
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from keras.optimizers import RMSprop, Adam
 from dataset_preparation import ChannelIndSpectrogram
 from deep_learning_models import identity_loss, QuadrupletNet, TripletNet
-from singleton import Singleton
 from keras.models import load_model
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
@@ -16,7 +13,7 @@ import matplotlib.pyplot as plt
 tf.random.set_seed(42)
 np.random.seed(42)
 
-class ExtractorAPI(metaclass=Singleton):
+class ExtractorAPI():
 
     def train(self, data, label, dev_range, model_config, save_path = None):
         batch_size = model_config['batch_size']
