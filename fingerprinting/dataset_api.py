@@ -120,6 +120,7 @@ class DatasetAPI():
         slot_filter=None,
         max_samples=None,
         shuffle=False,
+        required_iq_len=None,
     ):
         """
         Load AODT IQ records from a Hugging Face dataset.
@@ -143,6 +144,7 @@ class DatasetAPI():
         labels = []
         rssis = []
         frame_lengths = []
+        skipped_len_mismatch = 0
 
         for row in ds:
             if batch_filter is not None and int(row.get('batch', -1)) not in batch_filter:
@@ -162,6 +164,9 @@ class DatasetAPI():
             iq = self._hf_iq_to_1d_complex(iq_value, rx_ant=rx_ant, sym_mode=sym_mode)
             if iq is None:
                 continue
+            if required_iq_len is not None and int(iq.shape[0]) != int(required_iq_len):
+                skipped_len_mismatch += 1
+                continue
 
             try:
                 label_val = int(row[label_column])
@@ -180,6 +185,11 @@ class DatasetAPI():
             raise RuntimeError(
                 f"No usable records loaded from HF dataset '{repo_id}' (split='{split}'). "
                 "Check filters, columns, and whether IQ is embedded."
+            )
+        if required_iq_len is not None:
+            print(
+                f"[INFO] Enforced required IQ length={int(required_iq_len)}. "
+                f"Kept={len(frames)} samples, dropped={skipped_len_mismatch} length-mismatched samples."
             )
 
         # Keep a fixed frame length expected by downstream models.
@@ -214,6 +224,7 @@ class DatasetAPI():
         iq_column = data_config.get('hf_iq_column', 'iq')
         rx_ant = data_config.get('hf_rx_ant', 0)
         sym_mode = data_config.get('hf_sym_mode', 'flatten')
+        required_iq_len = data_config.get('hf_required_iq_len', None)
 
         data_train, labels_train, rssi_train = self.load_hf_dataset(
             repo_id=repo_id,
@@ -227,6 +238,7 @@ class DatasetAPI():
             slot_filter=data_config.get('hf_train_slots', None),
             max_samples=data_config.get('hf_max_train_samples', None),
             shuffle=shuffle_train if train_split != test_split else False,
+            required_iq_len=required_iq_len,
         )
 
         if train_split == test_split and not data_config.get('hf_test_batches') and not data_config.get('hf_test_slots'):
@@ -257,6 +269,7 @@ class DatasetAPI():
                 slot_filter=data_config.get('hf_test_slots', None),
                 max_samples=data_config.get('hf_max_test_samples', None),
                 shuffle=shuffle_test,
+                required_iq_len=required_iq_len,
             )
 
         node_ids_train = sorted(list(set(labels_train.flatten().astype(int))))

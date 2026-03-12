@@ -44,8 +44,9 @@ class ExtractorAPI():
         
         # Create callbacks during training
         callbacks = [
-            EarlyStopping(monitor='val_loss', min_delta=0, patience=10, restore_best_weights=True), 
-            ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=10, min_lr=1e-6, verbose=1)]
+            EarlyStopping(monitor='val_loss', min_delta=0, patience=20, restore_best_weights=True),
+            ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=10, min_lr=1e-6, verbose=1),
+        ]
         
         # Split the dasetset into validation and training sets.
         data_train, data_valid, label_train, label_valid = train_test_split(data, label, test_size=0.2, shuffle=True, random_state=42)
@@ -63,16 +64,18 @@ class ExtractorAPI():
         net.compile(loss = identity_loss, optimizer = opt)
 
         # Start training.
-        history = net.fit(train_generator,
-                                steps_per_epoch = data_train.shape[0]//batch_size,
-                                epochs = 1000,
-                                validation_data = valid_generator,
-                                validation_steps = data_valid.shape[0]//batch_size,
-                                verbose=1, 
-                                callbacks = callbacks,
-                                workers=1,
-                                use_multiprocessing=False,
-                                shuffle=False)
+        steps_per_epoch = max(1, data_train.shape[0] // batch_size)
+        validation_steps = max(1, data_valid.shape[0] // batch_size)
+        history = net.fit(
+            train_generator,
+            steps_per_epoch=steps_per_epoch,
+            epochs=1000,
+            validation_data=valid_generator,
+            validation_steps=validation_steps,
+            verbose=1,
+            callbacks=callbacks,
+            shuffle=False,
+        )
 
         if save_path:
             feature_extractor.save(save_path, overwrite=True)

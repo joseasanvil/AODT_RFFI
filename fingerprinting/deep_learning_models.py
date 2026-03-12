@@ -157,7 +157,9 @@ class TripletNet():
             # function below as y_true. We'll ignore it.
             label = np.ones(batchsize)
 
-            yield [A, P, N], label  
+            # Keras 3 / TF 2.16 expects tuple-structured inputs for
+            # generator -> tf.data conversion (lists trigger TypeSpec errors).
+            yield (A, P, N), label
 
 class QuadrupletNet():
     def __init__(self, seed=42):
@@ -278,4 +280,6 @@ class QuadrupletNet():
             # function below as y_true. We'll ignore it.
             label = np.ones(batchsize)
 
-            yield [A, P, N1, N2], label
+            # Keras 3 / TF 2.16 expects tuple-structured inputs for
+            # generator -> tf.data conversion (lists trigger TypeSpec errors).
+            yield (A, P, N1, N2), label
