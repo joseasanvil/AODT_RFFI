@@ -1,6 +1,9 @@
 import numpy as np
 import h5py
-import seaborn as sea
+try:
+    import seaborn as sea  # noqa: F401
+except ImportError:
+    sea = None
 import matplotlib.pyplot as plt
 from numpy import sum,sqrt
 from numpy.random import standard_normal, uniform

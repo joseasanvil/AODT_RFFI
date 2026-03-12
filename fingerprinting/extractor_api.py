@@ -7,8 +7,11 @@ from deep_learning_models import identity_loss, QuadrupletNet, TripletNet
 from keras.models import load_model
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
-import seaborn as sea
-import matplotlib.pyplot as plt
+try:
+    import seaborn as sea  # noqa: F401
+except ImportError:
+    sea = None
+import matplotlib.pyplot as plt  # noqa: F401
 
 tf.random.set_seed(42)
 np.random.seed(42)
